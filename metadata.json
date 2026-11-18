@@ -1,0 +1,6 @@
+{
+  "name": "Killzone CISD Desk",
+  "description": "Moteur temps reel combinant Session Killzones ICT (Auto-DST NY) et AlgoAlpha CISD M3 avec alertes webhook Telegram.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
