@@ -12,6 +12,8 @@ interface ConfluenceTableProps {
   sweeps: KillzoneSweepEvent[];
   onTestWebhook: () => void;
   testingWebhook: boolean;
+  onAcknowledgeAlert: (id: string) => Promise<void>;
+  acknowledgingId: string | null;
 }
 
 function formatNyTime(ts: number): string {
@@ -40,12 +42,20 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
   sweeps,
   onTestWebhook,
   testingWebhook,
+  onAcknowledgeAlert,
+  acknowledgingId,
 }) => {
-  const [filter, setFilter] = useState<'ALL' | 'HIGH' | 'BULLISH' | 'BEARISH'>('ALL');
+  const [filter, setFilter] = useState<'ALL' | 'PENDING' | 'HIGH' | 'BULLISH' | 'BEARISH'>('ALL');
   const [viewMode, setViewMode] = useState<'confluences' | 'sweeps'>('confluences');
+
+  const pendingCount = useMemo(
+    () => alerts.filter((a) => a.ackStatus === 'pending').length,
+    [alerts]
+  );
 
   const filteredAlerts = useMemo(() => {
     if (filter === 'ALL') return alerts;
+    if (filter === 'PENDING') return alerts.filter((a) => a.ackStatus === 'pending');
     if (filter === 'HIGH') return alerts.filter((a) => a.probability === 'HIGH');
     return alerts.filter((a) => a.direction === filter);
   }, [alerts, filter]);
@@ -84,8 +94,8 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
         </div>
 
         {viewMode === 'confluences' && (
-          <div className="flex items-center gap-1 bg-[#0B0F17] border border-[#1E293B] rounded-md p-0.5">
-            {(['ALL', 'HIGH', 'BULLISH', 'BEARISH'] as const).map((f) => (
+          <div className="flex flex-wrap items-center gap-1 bg-[#0B0F17] border border-[#1E293B] rounded-md p-0.5">
+            {(['ALL', 'PENDING', 'HIGH', 'BULLISH', 'BEARISH'] as const).map((f) => (
               <button
                 key={f}
                 type="button"
@@ -93,11 +103,15 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
                 className={`px-2.5 py-1 text-xs font-medium rounded transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
                   filter === f
                     ? 'bg-[#1E293B] text-[#F8FAFC]'
+                    : f === 'PENDING' && pendingCount > 0
+                    ? 'text-[#F59E0B] hover:text-[#FBBF24]'
                     : 'text-[#64748B] hover:text-[#CBD5E1]'
                 }`}
               >
                 {f === 'ALL'
                   ? 'Tous'
+                  : f === 'PENDING'
+                  ? `En cours (${pendingCount})`
                   : f === 'HIGH'
                   ? 'Probabilite Elevee'
                   : f === 'BULLISH'
@@ -113,10 +127,10 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
         filteredAlerts.length === 0 ? (
           <div className="px-6 py-10 text-center">
             <p className="text-sm text-[#94A3B8]">
-              Aucune confluence balayage Killzone + CISD M3 validee sur l'historique actif pour ce filtre.
+              Aucune confluence balayage Killzone + CISD M3 validee pour ce filtre.
             </p>
             <p className="mt-1 text-xs text-[#64748B]">
-              Le moteur surveille en continu chaque cloture M3 de {symbol} et declenchera Telegram automatiquement.
+              Seuls les nouveaux signaux EN COURS de {symbol} declenchent Telegram et rappellent jusqu'a validation (« J'ai vu »).
             </p>
             <button
               type="button"
@@ -139,7 +153,7 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
                   <th className="py-2.5 px-4 whitespace-nowrap">Niveau Casse</th>
                   <th className="py-2.5 px-4 whitespace-nowrap">Position Prix</th>
                   <th className="py-2.5 px-4 text-right whitespace-nowrap">Origine CISD M3</th>
-                  <th className="py-2.5 px-4 text-right whitespace-nowrap">Ratio Bruit</th>
+                  <th className="py-2.5 px-4 whitespace-nowrap">Validation (J'ai vu)</th>
                   <th className="py-2.5 px-4 whitespace-nowrap">Statut Webhook</th>
                 </tr>
               </thead>
@@ -147,7 +161,14 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
                 {filteredAlerts.map((a) => {
                   const isBull = a.direction === 'BULLISH';
                   return (
-                    <tr key={a.id} className="hover:bg-[#1E293B]/35 transition-colors">
+                    <tr
+                      key={a.id}
+                      className={
+                        a.ackStatus === 'pending'
+                          ? 'bg-[#F59E0B]/5 hover:bg-[#F59E0B]/10 transition-colors'
+                          : 'hover:bg-[#1E293B]/35 transition-colors'
+                      }
+                    >
                       <td className="py-2.5 px-4 font-mono tabular-nums text-[#CBD5E1] whitespace-nowrap">
                         {a.nyTimeStr}
                       </td>
@@ -191,8 +212,30 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
                       <td className="py-2.5 px-4 text-right font-mono tabular-nums text-[#F1F5F9] whitespace-nowrap">
                         {formatSymbolPrice(a.cisd.originLevel, a.symbol)}
                       </td>
-                      <td className="py-2.5 px-4 text-right font-mono tabular-nums text-[#CBD5E1] whitespace-nowrap">
-                        {a.cisd.noiseRatio.toFixed(2)} / {a.cisd.toleranceUsed}
+                      <td className="py-2.5 px-4 whitespace-nowrap">
+                        {a.ackStatus === 'pending' ? (
+                          <div className="flex items-center gap-2">
+                            <span className="text-[#F59E0B] font-medium font-mono tabular-nums">
+                              En cours · #{a.reminderCount}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => void onAcknowledgeAlert(a.id)}
+                              disabled={acknowledgingId === a.id}
+                              className="px-2.5 py-1 text-[11px] font-semibold bg-[#10B981] hover:bg-[#059669] text-[#0B0F17] rounded transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                              {acknowledgingId === a.id ? '...' : "Valider (J'ai vu)"}
+                            </button>
+                          </div>
+                        ) : a.ackStatus === 'acknowledged' ? (
+                          <span className="text-[#10B981] font-medium">
+                            Vu / Valide ({a.acknowledgedBy === 'telegram' ? 'Telegram' : 'App'})
+                          </span>
+                        ) : a.ackStatus === 'expired' ? (
+                          <span className="text-[#64748B]">Expire</span>
+                        ) : (
+                          <span className="text-[#64748B]">Passe (ignore)</span>
+                        )}
                       </td>
                       <td className="py-2.5 px-4 whitespace-nowrap">
                         <span
@@ -205,7 +248,9 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
                           }
                         >
                           {a.webhookStatus === 'sent'
-                            ? 'Envoye'
+                            ? a.reminderCount > 1
+                              ? `Envoye (x${a.reminderCount})`
+                              : 'Envoye'
                             : a.webhookStatus === 'failed'
                             ? `Echec (${a.webhookDetail ?? ''})`
                             : a.webhookStatus === 'pending'

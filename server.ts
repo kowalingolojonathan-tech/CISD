@@ -6,6 +6,11 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { TradingConfluenceEngine } from './src/engine/confluence.ts';
 import { MarketLiveFeed } from './src/engine/marketFeed.ts';
+import {
+  answerTelegramCallback,
+  fetchTelegramUpdates,
+  sendTelegramSimpleText,
+} from './src/engine/telegram.ts';
 import type {
   EngineConfig,
   EngineSnapshot,
@@ -71,6 +76,8 @@ function savePersistedConfig(
       telegramChatId: sharedCfg.telegramChatId,
       customWebhookUrl: sharedCfg.customWebhookUrl,
       alertsEnabled: sharedCfg.alertsEnabled,
+      repeatAlertIntervalSec: sharedCfg.repeatAlertIntervalSec,
+      liveSetupMaxMinutes: sharedCfg.liveSetupMaxMinutes,
       htfOverrides: {
         'XAU/USD': {
           dailyBiasMode: xauCfg.dailyBiasMode,
@@ -111,6 +118,8 @@ function createInitialConfig(symbol: SupportedSymbol): EngineConfig {
     telegramChatId: persisted.telegramChatId || process.env.TELEGRAM_CHAT_ID || '',
     customWebhookUrl: persisted.customWebhookUrl ?? '',
     alertsEnabled: persisted.alertsEnabled ?? true,
+    repeatAlertIntervalSec: persisted.repeatAlertIntervalSec ?? 30,
+    liveSetupMaxMinutes: persisted.liveSetupMaxMinutes ?? 20,
   };
 }
 
@@ -135,6 +144,7 @@ function getSymbolsOverview(): SymbolOverview[] {
       h4Bias: snap.htfBias.h4,
       confluenceCount: snap.confluenceAlerts.length,
       highProbCount: snap.confluenceAlerts.filter((a) => a.probability === 'HIGH').length,
+      pendingAckCount: snap.confluenceAlerts.filter((a) => a.ackStatus === 'pending').length,
       connected: snap.feedStatus.connected,
     };
   });
@@ -187,12 +197,11 @@ app.get('/api/stream', (req: Request, res: Response) => {
     sendSnapshot();
   });
 
-  // Also push light overview updates when the secondary symbol ticks
   const otherSym: SupportedSymbol = sym === 'XAU/USD' ? 'EUR/USD' : 'XAU/USD';
   let lastOverviewPush = 0;
   const unsubscribeOther = engines[otherSym].subscribe(() => {
     const now = Date.now();
-    if (now - lastOverviewPush >= 5000) {
+    if (now - lastOverviewPush >= 4000) {
       lastOverviewPush = now;
       sendSnapshot();
     }
@@ -206,6 +215,41 @@ app.get('/api/stream', (req: Request, res: Response) => {
     clearInterval(keepAlive);
     unsubscribePrimary();
     unsubscribeOther();
+  });
+});
+
+// Acknowledge ("J'ai vu / Valider") one or all live alerts so reminders stop immediately
+app.post('/api/alerts/ack', (req: Request, res: Response) => {
+  const body = (req.body ?? {}) as { id?: string; symbol?: string; all?: boolean };
+  const sym = resolveSymbol(req.query.symbol ?? body.symbol);
+
+  if (body.all) {
+    let total = 0;
+    for (const s of SUPPORTED_SYMBOLS) {
+      total += engines[s].acknowledgeAllPending('ui');
+    }
+    res.json({ ok: true, acknowledgedCount: total, snapshot: buildSnapshot(sym) });
+    return;
+  }
+
+  const identifier = typeof body.id === 'string' ? body.id.trim() : '';
+  if (!identifier) {
+    res.status(400).json({ ok: false, error: 'Identifiant alerte manquant' });
+    return;
+  }
+
+  let matched = engines[sym].acknowledgeAlert(identifier, 'ui');
+  if (!matched) {
+    for (const s of SUPPORTED_SYMBOLS) {
+      matched = engines[s].acknowledgeAlert(identifier, 'ui');
+      if (matched) break;
+    }
+  }
+
+  res.json({
+    ok: true,
+    acknowledgedCount: matched ? 1 : 0,
+    snapshot: buildSnapshot(sym),
   });
 });
 
@@ -270,6 +314,20 @@ app.post('/api/config', async (req: Request, res: Response) => {
     }
     if (typeof body.alertsEnabled === 'boolean') {
       sharedPatch.alertsEnabled = body.alertsEnabled;
+    }
+    if (
+      typeof body.repeatAlertIntervalSec === 'number' &&
+      body.repeatAlertIntervalSec >= 10 &&
+      body.repeatAlertIntervalSec <= 300
+    ) {
+      sharedPatch.repeatAlertIntervalSec = Math.round(body.repeatAlertIntervalSec);
+    }
+    if (
+      typeof body.liveSetupMaxMinutes === 'number' &&
+      body.liveSetupMaxMinutes >= 5 &&
+      body.liveSetupMaxMinutes <= 120
+    ) {
+      sharedPatch.liveSetupMaxMinutes = Math.round(body.liveSetupMaxMinutes);
     }
 
     await Promise.all(
@@ -342,14 +400,92 @@ app.post('/api/webhook/tradingview', async (req: Request, res: Response) => {
   }
 });
 
-function startSelfKeepAlive() {
-  const appUrl = (process.env.APP_URL ?? '').trim().replace(/\/+$/, '');
-  if (!appUrl) return;
+function startBackgroundLoops() {
+  // 1. Repeat Telegram reminder loop every 5s for unacknowledged "en cours" alerts
   setInterval(() => {
-    void fetch(`${appUrl}/api/health`).catch(() => {
-      // Ignore transient self-ping network issues
-    });
-  }, 4 * 60 * 1000);
+    for (const s of SUPPORTED_SYMBOLS) {
+      void engines[s].processPendingReminders();
+    }
+  }, 5000);
+
+  // 2. Telegram getUpdates poller so clicking "✅ J'ai vu" or replying "vu/ok" on Telegram validates immediately
+  let tgUpdateOffset = 0;
+  let isPollingTg = false;
+  setInterval(() => {
+    if (isPollingTg) return;
+    const cfg = engines['XAU/USD'].getConfig();
+    if (!cfg.telegramBotToken.trim()) return;
+
+    isPollingTg = true;
+    void (async () => {
+      try {
+        const updates = await fetchTelegramUpdates(cfg.telegramBotToken, tgUpdateOffset);
+        for (const u of updates) {
+          if (u.update_id >= tgUpdateOffset) {
+            tgUpdateOffset = u.update_id + 1;
+          }
+
+          const cb = u.callback_query;
+          if (cb?.data && cb.data.startsWith('ack:')) {
+            const parts = cb.data.split(':');
+            const symRaw = parts[1];
+            const identifier = parts[2] ?? '';
+            const targetSym = resolveSymbol(symRaw);
+            const matched =
+              engines[targetSym].acknowledgeAlert(identifier, 'telegram') ??
+              engines['XAU/USD'].acknowledgeAlert(identifier, 'telegram') ??
+              engines['EUR/USD'].acknowledgeAlert(identifier, 'telegram');
+
+            if (!matched) {
+              // Fallback: acknowledge all pending on that symbol if exact ts was replaced
+              engines[targetSym].acknowledgeAllPending('telegram');
+            }
+
+            await answerTelegramCallback(
+              cfg.telegramBotToken,
+              cb.id,
+              "✅ Alerte validee (J'ai vu) — Rappels arretes.",
+              cb.message?.chat?.id,
+              cb.message?.message_id
+            );
+            continue;
+          }
+
+          const msgText = u.message?.text?.trim() ?? '';
+          const msgChatId = u.message?.chat?.id ? String(u.message.chat.id) : '';
+          if (
+            msgText &&
+            /^(ok|vu|stop|\/vu|valide|valider|j'ai vu)$/i.test(msgText) &&
+            (!cfg.telegramChatId || msgChatId === cfg.telegramChatId.trim())
+          ) {
+            let total = 0;
+            for (const s of SUPPORTED_SYMBOLS) {
+              total += engines[s].acknowledgeAllPending('telegram');
+            }
+            if (total > 0 && msgChatId) {
+              await sendTelegramSimpleText(
+                cfg.telegramBotToken,
+                msgChatId,
+                `✅ <b>Validation enregistree :</b> ${total} alerte(s) en cours marquee(s) comme vue(s). Les rappels sont arretes.`
+              );
+            }
+          }
+        }
+      } finally {
+        isPollingTg = false;
+      }
+    })();
+  }, 3000);
+
+  // 3. Server self keep-alive if APP_URL is configured
+  const appUrl = (process.env.APP_URL ?? '').trim().replace(/\/+$/, '');
+  if (appUrl) {
+    setInterval(() => {
+      void fetch(`${appUrl}/api/health`).catch(() => {
+        // Ignore transient self-ping network issues
+      });
+    }, 4 * 60 * 1000);
+  }
 }
 
 async function startServer() {
@@ -377,7 +513,7 @@ async function startServer() {
     console.log(`Killzone CISD Desk server listening on http://0.0.0.0:${PORT}`);
     void feeds['XAU/USD'].start();
     void feeds['EUR/USD'].start();
-    startSelfKeepAlive();
+    startBackgroundLoops();
   });
 }
 

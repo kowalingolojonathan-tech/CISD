@@ -3,6 +3,7 @@ import { computeSessionCountdown, getNyDateTime, KillzonesEngine } from './killz
 import { dispatchAlertWebhook } from './telegram.ts';
 import {
   getPriceDecimals,
+  type AlertAckStatus,
   type Candle,
   type CisdSignal,
   type ConfluenceAlert,
@@ -13,6 +14,19 @@ import {
   type KillzoneSweepEvent,
   type ProbabilityTier,
 } from './types.ts';
+
+const LIVE_ALERT_FRESHNESS_MS = 6 * 60 * 1000; // Signal must be <= 6 min old to qualify as "en cours"
+
+interface PersistedAckState {
+  ackStatus: AlertAckStatus;
+  acknowledgedAt: number | null;
+  acknowledgedBy: 'ui' | 'telegram' | null;
+  reminderCount: number;
+  lastReminderAt: number | null;
+  nextReminderAt: number | null;
+  webhookStatus: 'pending' | 'sent' | 'skipped' | 'failed';
+  webhookDetail?: string;
+}
 
 function maskSecret(val: string): string {
   const trimmed = val.trim();
@@ -47,6 +61,8 @@ export class TradingConfluenceEngine {
   private lastKzHighSweep: KillzoneSweepEvent | null = null;
   private lastKzLowSweep: KillzoneSweepEvent | null = null;
   private consumedSweepKeys = new Set<string>();
+  private persistedAlertStates = new Map<string, PersistedAckState>();
+  private isReminderTickRunning = false;
 
   private feedConnected = false;
   private lastTickAt: number | null = null;
@@ -87,6 +103,145 @@ export class TradingConfluenceEngine {
     if (lastTickAt !== null) this.lastTickAt = lastTickAt;
     this.lastError = lastError;
     this.emit();
+  }
+
+  public getPendingAlertCount(): number {
+    return this.confluenceAlerts.filter((a) => a.ackStatus === 'pending').length;
+  }
+
+  /**
+   * Acknowledge one alert (by id, dedupeKey, or timestamp string) so repeat reminders stop immediately.
+   */
+  public acknowledgeAlert(
+    identifier: string,
+    source: 'ui' | 'telegram' = 'ui'
+  ): ConfluenceAlert | null {
+    const now = Date.now();
+    let matched: ConfluenceAlert | null = null;
+
+    for (const alert of this.confluenceAlerts) {
+      if (
+        alert.id === identifier ||
+        alert.dedupeKey === identifier ||
+        String(alert.timestamp) === identifier
+      ) {
+        if (alert.ackStatus === 'pending') {
+          alert.ackStatus = 'acknowledged';
+          alert.acknowledgedAt = now;
+          alert.acknowledgedBy = source;
+          alert.nextReminderAt = null;
+          alert.webhookDetail =
+            source === 'telegram' ? 'Valide via Telegram (Vu)' : "Valide dans l'app (Vu)";
+          this.saveAckState(alert);
+        }
+        matched = alert;
+      }
+    }
+
+    if (matched) {
+      this.emit();
+    }
+    return matched;
+  }
+
+  /**
+   * Acknowledge all currently pending live alerts.
+   */
+  public acknowledgeAllPending(source: 'ui' | 'telegram' = 'ui'): number {
+    const now = Date.now();
+    let count = 0;
+    for (const alert of this.confluenceAlerts) {
+      if (alert.ackStatus === 'pending') {
+        alert.ackStatus = 'acknowledged';
+        alert.acknowledgedAt = now;
+        alert.acknowledgedBy = source;
+        alert.nextReminderAt = null;
+        alert.webhookDetail =
+          source === 'telegram' ? 'Valide via Telegram (Vu)' : "Valide dans l'app (Vu)";
+        this.saveAckState(alert);
+        count++;
+      }
+    }
+    if (count > 0) {
+      this.emit();
+    }
+    return count;
+  }
+
+  /**
+   * Called periodically (every ~5s) to re-send Telegram reminders for unacknowledged live alerts
+   * while they are still active ("en cours"). Stops when validated or expired.
+   */
+  public async processPendingReminders() {
+    if (this.isReminderTickRunning) return;
+    this.isReminderTickRunning = true;
+    try {
+      const now = Date.now();
+      const maxWindowMs = Math.max(5, this.config.liveSetupMaxMinutes) * 60 * 1000;
+      const intervalMs = Math.max(10, this.config.repeatAlertIntervalSec) * 1000;
+      const activeKzNow = this.kzEngine.getActiveSessionAt(now);
+      let changed = false;
+
+      for (const alert of this.confluenceAlerts) {
+        if (alert.ackStatus !== 'pending') continue;
+
+        const elapsed = now - alert.timestamp;
+        if (elapsed > maxWindowMs || (this.config.requireActiveKillzone && !activeKzNow)) {
+          alert.ackStatus = 'expired';
+          alert.nextReminderAt = null;
+          alert.webhookDetail = !activeKzNow
+            ? 'Killzone terminee — rappel arrete'
+            : 'Fenetre en cours expiree';
+          this.saveAckState(alert);
+          changed = true;
+          continue;
+        }
+
+        if (!this.config.alertsEnabled) {
+          continue;
+        }
+
+        const lastSent = alert.lastReminderAt ?? alert.timestamp;
+        if (now - lastSent >= intervalMs) {
+          alert.reminderCount += 1;
+          alert.lastReminderAt = now;
+          alert.nextReminderAt = now + intervalMs;
+          this.saveAckState(alert);
+          this.emit();
+
+          const res = await dispatchAlertWebhook(alert, {
+            telegramBotToken: this.config.telegramBotToken,
+            telegramChatId: this.config.telegramChatId,
+            customWebhookUrl: this.config.customWebhookUrl,
+            reminderNumber: alert.reminderCount,
+            includeAckButton: true,
+          });
+          alert.webhookStatus = res.status;
+          alert.webhookDetail = res.detail;
+          this.saveAckState(alert);
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        this.emit();
+      }
+    } finally {
+      this.isReminderTickRunning = false;
+    }
+  }
+
+  private saveAckState(alert: ConfluenceAlert) {
+    this.persistedAlertStates.set(alert.dedupeKey, {
+      ackStatus: alert.ackStatus,
+      acknowledgedAt: alert.acknowledgedAt,
+      acknowledgedBy: alert.acknowledgedBy ?? null,
+      reminderCount: alert.reminderCount,
+      lastReminderAt: alert.lastReminderAt,
+      nextReminderAt: alert.nextReminderAt,
+      webhookStatus: alert.webhookStatus,
+      webhookDetail: alert.webhookDetail,
+    });
   }
 
   /**
@@ -346,30 +501,85 @@ export class TradingConfluenceEngine {
   }
 
   private async recordAndDispatchAlert(confluence: ConfluenceAlert, dispatchLiveWebhook: boolean) {
+    const saved = this.persistedAlertStates.get(confluence.dedupeKey);
+    if (saved) {
+      confluence.ackStatus = saved.ackStatus;
+      confluence.acknowledgedAt = saved.acknowledgedAt;
+      confluence.acknowledgedBy = saved.acknowledgedBy;
+      confluence.reminderCount = saved.reminderCount;
+      confluence.lastReminderAt = saved.lastReminderAt;
+      confluence.nextReminderAt = saved.nextReminderAt;
+      confluence.webhookStatus = saved.webhookStatus;
+      confluence.webhookDetail = saved.webhookDetail;
+    }
+
     this.confluenceAlerts.unshift(confluence);
     if (this.confluenceAlerts.length > 100) {
       this.confluenceAlerts.length = 100;
     }
 
-    if (dispatchLiveWebhook && this.config.alertsEnabled) {
-      if (this.config.highProbabilityOnly && confluence.probability !== 'HIGH') {
-        confluence.webhookStatus = 'skipped';
-        confluence.webhookDetail = 'Filtre Haute Probabilite D1+H4 actif';
-        this.emit();
-        return;
-      }
-
-      confluence.webhookStatus = 'pending';
-      this.emit();
-      const res = await dispatchAlertWebhook(confluence, {
-        telegramBotToken: this.config.telegramBotToken,
-        telegramChatId: this.config.telegramChatId,
-        customWebhookUrl: this.config.customWebhookUrl,
-      });
-      confluence.webhookStatus = res.status;
-      confluence.webhookDetail = res.detail;
-      this.emit();
+    if (saved) {
+      return;
     }
+
+    const now = Date.now();
+    const ageMs = now - confluence.timestamp;
+    const isFreshLiveSetup = ageMs <= LIVE_ALERT_FRESHNESS_MS;
+    const activeKzNow = this.kzEngine.getActiveSessionAt(now);
+
+    if (!dispatchLiveWebhook || !isFreshLiveSetup) {
+      confluence.ackStatus = 'historical';
+      confluence.webhookStatus = 'skipped';
+      confluence.webhookDetail =
+        dispatchLiveWebhook && !isFreshLiveSetup
+          ? 'Signal passe (> 6 min) — ignore'
+          : 'Historique passe';
+      return;
+    }
+
+    if (this.config.requireActiveKillzone && !activeKzNow) {
+      confluence.ackStatus = 'historical';
+      confluence.webhookStatus = 'skipped';
+      confluence.webhookDetail = 'Killzone fermee actuellement';
+      return;
+    }
+
+    if (!this.config.alertsEnabled) {
+      confluence.ackStatus = 'historical';
+      confluence.webhookStatus = 'skipped';
+      confluence.webhookDetail = 'Alertes desactivees';
+      return;
+    }
+
+    if (this.config.highProbabilityOnly && confluence.probability !== 'HIGH') {
+      confluence.ackStatus = 'historical';
+      confluence.webhookStatus = 'skipped';
+      confluence.webhookDetail = 'Filtre Haute Probabilite D1+H4 actif';
+      this.emit();
+      return;
+    }
+
+    // Fresh live ("en cours") alert -> enter pending validation state and dispatch immediately!
+    const intervalMs = Math.max(10, this.config.repeatAlertIntervalSec) * 1000;
+    confluence.ackStatus = 'pending';
+    confluence.reminderCount = 1;
+    confluence.lastReminderAt = now;
+    confluence.nextReminderAt = now + intervalMs;
+    confluence.webhookStatus = 'pending';
+    this.saveAckState(confluence);
+    this.emit();
+
+    const res = await dispatchAlertWebhook(confluence, {
+      telegramBotToken: this.config.telegramBotToken,
+      telegramChatId: this.config.telegramChatId,
+      customWebhookUrl: this.config.customWebhookUrl,
+      reminderNumber: 1,
+      includeAckButton: true,
+    });
+    confluence.webhookStatus = res.status;
+    confluence.webhookDetail = res.detail;
+    this.saveAckState(confluence);
+    this.emit();
   }
 
   private evaluateConfluence(
@@ -401,6 +611,7 @@ export class TradingConfluenceEngine {
         const { dailyBias, h4Bias, probability } = this.computeProbabilityAt(bar.time, 'BEARISH');
         return {
           id: `conf_${bar.time}_${barIndex}_${isIntrabarSignal ? 'live' : 'cls'}`,
+          dedupeKey,
           timestamp: bar.time,
           nyTimeStr: ny.formatted,
           symbol: this.config.symbol,
@@ -417,7 +628,13 @@ export class TradingConfluenceEngine {
           isIntrabarSignal,
           hasInternalSwingSweep: cisd.strongSweep,
           webhookStatus: 'skipped',
-          webhookDetail: isIntrabarSignal ? 'Temps reel' : 'Historique initial',
+          webhookDetail: isIntrabarSignal ? 'Temps reel' : 'Historique passe',
+          ackStatus: 'historical',
+          acknowledgedAt: null,
+          acknowledgedBy: null,
+          reminderCount: 0,
+          lastReminderAt: null,
+          nextReminderAt: null,
         };
       }
     }
@@ -435,6 +652,7 @@ export class TradingConfluenceEngine {
         const { dailyBias, h4Bias, probability } = this.computeProbabilityAt(bar.time, 'BULLISH');
         return {
           id: `conf_${bar.time}_${barIndex}_${isIntrabarSignal ? 'live' : 'cls'}`,
+          dedupeKey,
           timestamp: bar.time,
           nyTimeStr: ny.formatted,
           symbol: this.config.symbol,
@@ -451,7 +669,13 @@ export class TradingConfluenceEngine {
           isIntrabarSignal,
           hasInternalSwingSweep: cisd.strongSweep,
           webhookStatus: 'skipped',
-          webhookDetail: isIntrabarSignal ? 'Temps reel' : 'Historique initial',
+          webhookDetail: isIntrabarSignal ? 'Temps reel' : 'Historique passe',
+          ackStatus: 'historical',
+          acknowledgedAt: null,
+          acknowledgedBy: null,
+          reminderCount: 0,
+          lastReminderAt: null,
+          nextReminderAt: null,
         };
       }
     }
@@ -478,6 +702,7 @@ export class TradingConfluenceEngine {
         }
       : {
           id: `test_${Date.now()}`,
+          dedupeKey: `test_${Date.now()}`,
           timestamp: now,
           nyTimeStr: ny.formatted,
           symbol: this.config.symbol,
@@ -518,12 +743,20 @@ export class TradingConfluenceEngine {
           isIntrabarSignal: true,
           hasInternalSwingSweep: true,
           webhookStatus: 'pending',
+          ackStatus: 'acknowledged',
+          acknowledgedAt: now,
+          acknowledgedBy: 'ui',
+          reminderCount: 1,
+          lastReminderAt: now,
+          nextReminderAt: null,
         };
 
     const res = await dispatchAlertWebhook(sampleAlert, {
       telegramBotToken: this.config.telegramBotToken,
       telegramChatId: this.config.telegramChatId,
       customWebhookUrl: this.config.customWebhookUrl,
+      reminderNumber: 1,
+      includeAckButton: false,
     });
 
     return {
@@ -562,6 +795,8 @@ export class TradingConfluenceEngine {
         telegramChatId: this.config.telegramChatId,
         customWebhookUrl: this.config.customWebhookUrl,
         alertsEnabled: this.config.alertsEnabled,
+        repeatAlertIntervalSec: this.config.repeatAlertIntervalSec,
+        liveSetupMaxMinutes: this.config.liveSetupMaxMinutes,
         hasTelegramToken: this.config.telegramBotToken.trim().length > 0,
         telegramTokenMasked: maskSecret(this.config.telegramBotToken),
         hasTwelveDataKey: this.config.twelveDataApiKey.trim().length > 0,

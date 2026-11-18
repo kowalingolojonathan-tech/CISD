@@ -22,7 +22,9 @@ export default function App() {
   const [railTab, setRailTab] = useState<RailTab>('sessions');
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [testingWebhook, setTestingWebhook] = useState<boolean>(false);
+  const [acknowledgingId, setAcknowledgingId] = useState<string | null>(null);
   const [toastMsg, setToastMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const lastSoundedPendingRef = useRef<string>('');
 
   // Anti-veille state: Browser Wake Lock + 25s /api/health heartbeat
   const [antiSleepEnabled, setAntiSleepEnabled] = useState<boolean>(true);
@@ -222,6 +224,80 @@ export default function App() {
     }
   }, [selectedSymbol, showToast]);
 
+  const handleAcknowledgeAlert = useCallback(
+    async (id: string) => {
+      setAcknowledgingId(id);
+      try {
+        const res = await fetch(`/api/alerts/ack?symbol=${encodeURIComponent(selectedSymbol)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, symbol: selectedSymbol }),
+        });
+        const data = (await res.json()) as { ok: boolean; snapshot?: EngineSnapshot };
+        if (data.snapshot) setSnapshot(data.snapshot);
+        showToast(true, "Alerte validee (« J'ai vu »). Les rappels Telegram sont arretes.");
+      } catch (err) {
+        showToast(false, err instanceof Error ? err.message : 'Erreur validation');
+      } finally {
+        setAcknowledgingId(null);
+      }
+    },
+    [selectedSymbol, showToast]
+  );
+
+  const handleAcknowledgeAll = useCallback(async () => {
+    setAcknowledgingId('ALL');
+    try {
+      const res = await fetch(`/api/alerts/ack?symbol=${encodeURIComponent(selectedSymbol)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ all: true, symbol: selectedSymbol }),
+      });
+      const data = (await res.json()) as { ok: boolean; snapshot?: EngineSnapshot };
+      if (data.snapshot) setSnapshot(data.snapshot);
+      showToast(true, 'Toutes les alertes en cours ont ete validees.');
+    } catch (err) {
+      showToast(false, err instanceof Error ? err.message : 'Erreur validation');
+    } finally {
+      setAcknowledgingId(null);
+    }
+  }, [selectedSymbol, showToast]);
+
+  const pendingAlerts =
+    snapshot?.confluenceAlerts.filter((a) => a.ackStatus === 'pending') ?? [];
+
+  // Play subtle double-beep chime in browser when a new live pending alert arrives
+  useEffect(() => {
+    const newest = pendingAlerts[0];
+    if (!newest) return;
+    const key = `${newest.id}_${newest.reminderCount}`;
+    if (lastSoundedPendingRef.current === key) return;
+    lastSoundedPendingRef.current = key;
+
+    try {
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const now = ctx.currentTime;
+      [0, 0.22].forEach((offset, idx) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = idx === 0 ? 784 : 988;
+        gain.gain.setValueAtTime(0.08, now + offset);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + offset + 0.16);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + offset);
+        osc.stop(now + offset + 0.17);
+      });
+    } catch {
+      // Ignore autoplay restriction
+    }
+  }, [pendingAlerts]);
+
   const latestCandle = snapshot?.candles[snapshot.candles.length - 1] ?? null;
   const activeUnswept = snapshot?.unsweptLevels.filter((l) => !l.swept) ?? [];
   const latestTrend = snapshot?.candleTrends[snapshot.candleTrends.length - 1] ?? 0;
@@ -344,6 +420,11 @@ export default function App() {
                         D1:{overview.dailyBias === 'BULLISH' ? '▲' : overview.dailyBias === 'BEARISH' ? '▼' : '-'}
                       </span>
                     )}
+                    {overview && (overview.pendingAckCount ?? 0) > 0 && (
+                      <span className="text-[10px] font-mono font-semibold text-[#F59E0B]">
+                        ({overview.pendingAckCount} EN COURS)
+                      </span>
+                    )}
                   </button>
                 );
               })}
@@ -376,6 +457,70 @@ export default function App() {
             </button>
           </div>
         </section>
+
+        {pendingAlerts.length > 0 && (
+          <section className="bg-[#111827] border border-[#F59E0B]/70 rounded-lg p-4 flex flex-col gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-[#F59E0B]" />
+                <span className="text-sm font-semibold text-[#FBBF24]">
+                  ALERTE EN COURS — VALIDATION « J'AI VU » REQUISE ({pendingAlerts.length})
+                </span>
+              </div>
+              {pendingAlerts.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => void handleAcknowledgeAll()}
+                  disabled={acknowledgingId === 'ALL'}
+                  className="px-3.5 py-1.5 text-xs font-semibold bg-[#10B981] hover:bg-[#059669] text-[#0B0F17] rounded-md transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  {acknowledgingId === 'ALL' ? 'Validation...' : 'Tout valider (J’ai vu)'}
+                </button>
+              )}
+            </div>
+
+            <div className="divide-y divide-[#1E293B]">
+              {pendingAlerts.map((a) => (
+                <div
+                  key={a.id}
+                  className="py-2.5 flex flex-wrap items-center justify-between gap-4 text-xs"
+                >
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className="font-semibold text-[#F8FAFC]">{a.symbol} M3</span>
+                    <span
+                      className={`font-semibold ${
+                        a.direction === 'BULLISH' ? 'text-[#10B981]' : 'text-[#EF4444]'
+                      }`}
+                    >
+                      {a.direction === 'BULLISH' ? '▲ HAUSSIER' : '▼ BAISSIER'}
+                    </span>
+                    <span className="text-[#CBD5E1]">
+                      Cassure {a.kzSweep.sessionName} ({a.kzSweep.shortName}.
+                      {a.kzSweep.isHigh ? 'H' : 'L'}{' '}
+                      <span className="font-mono tabular-nums">
+                        {formatSymbolPrice(a.kzSweep.level, a.symbol)}
+                      </span>
+                      )
+                    </span>
+                    <span className="font-mono tabular-nums text-[#F59E0B]">
+                      Rappel Telegram #{a.reminderCount} envoye (repete toutes les{' '}
+                      {snapshot?.config.repeatAlertIntervalSec ?? 30}s jusqu'a validation)
+                    </span>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => void handleAcknowledgeAlert(a.id)}
+                    disabled={acknowledgingId === a.id}
+                    className="px-4 py-2 text-xs font-semibold bg-[#10B981] hover:bg-[#059669] text-[#0B0F17] rounded-md transition-colors cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                  >
+                    {acknowledgingId === a.id ? 'Validation...' : "Valider (J'ai vu)"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         {loading && !snapshot ? (
           <div className="bg-[#111827] border border-[#1E293B] rounded-lg p-10 text-center">
@@ -777,6 +922,8 @@ export default function App() {
                   sweeps={snapshot.sweepEvents}
                   onTestWebhook={() => void handleTestWebhook()}
                   testingWebhook={testingWebhook}
+                  onAcknowledgeAlert={handleAcknowledgeAlert}
+                  acknowledgingId={acknowledgingId}
                 />
 
                 {/* Full Settings Section also visible directly on Terminal */}
@@ -851,6 +998,8 @@ export default function App() {
                 sweeps={snapshot.sweepEvents}
                 onTestWebhook={() => void handleTestWebhook()}
                 testingWebhook={testingWebhook}
+                onAcknowledgeAlert={handleAcknowledgeAlert}
+                acknowledgingId={acknowledgingId}
               />
             )}
 

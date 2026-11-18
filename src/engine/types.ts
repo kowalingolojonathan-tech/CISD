@@ -130,8 +130,11 @@ export interface HtfBiasState {
   alignedDirection: HtfBiasDirection | null; // non-null when D1 == H4 != NEUTRAL
 }
 
+export type AlertAckStatus = 'pending' | 'acknowledged' | 'expired' | 'historical';
+
 export interface ConfluenceAlert {
   id: string;
+  dedupeKey: string;
   timestamp: number;
   nyTimeStr: string;
   symbol: string;
@@ -149,6 +152,12 @@ export interface ConfluenceAlert {
   hasInternalSwingSweep: boolean;
   webhookStatus: 'pending' | 'sent' | 'skipped' | 'failed';
   webhookDetail?: string;
+  ackStatus: AlertAckStatus;
+  acknowledgedAt: number | null;
+  acknowledgedBy?: 'ui' | 'telegram' | null;
+  reminderCount: number;
+  lastReminderAt: number | null;
+  nextReminderAt: number | null;
 }
 
 export type MarketSourceType = 'yahoo_swissquote' | 'twelvedata';
@@ -171,11 +180,13 @@ export interface EngineConfig {
   dailyBiasMode: HtfBiasMode;
   h4BiasMode: HtfBiasMode;
   highProbabilityOnly: boolean; // true = only dispatch Telegram when M3 CISD aligns with BOTH D1 & H4
-  // Telegram / Webhook
+  // Telegram / Webhook & Repeat Alerts
   telegramBotToken: string;
   telegramChatId: string;
   customWebhookUrl: string;
   alertsEnabled: boolean;
+  repeatAlertIntervalSec: number; // default 30s repeat until user validates "J'ai vu"
+  liveSetupMaxMinutes: number; // default 20m window while setup is still active/en cours
 }
 
 export interface KillzoneDaySummary {
@@ -202,6 +213,7 @@ export interface SymbolOverview {
   h4Bias: HtfBiasDirection;
   confluenceCount: number;
   highProbCount: number;
+  pendingAckCount?: number;
   connected: boolean;
 }
 

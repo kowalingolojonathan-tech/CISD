@@ -34,6 +34,12 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
   const [telegramChatId, setTelegramChatId] = useState<string>(config.telegramChatId);
   const [customWebhookUrl, setCustomWebhookUrl] = useState<string>(config.customWebhookUrl);
   const [alertsEnabled, setAlertsEnabled] = useState<boolean>(config.alertsEnabled);
+  const [repeatAlertIntervalSec, setRepeatAlertIntervalSec] = useState<number>(
+    config.repeatAlertIntervalSec ?? 30
+  );
+  const [liveSetupMaxMinutes, setLiveSetupMaxMinutes] = useState<number>(
+    config.liveSetupMaxMinutes ?? 20
+  );
 
   const [saving, setSaving] = useState(false);
   const [saveFeedback, setSaveFeedback] = useState<string | null>(null);
@@ -71,6 +77,8 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
     setTelegramChatId(config.telegramChatId);
     setCustomWebhookUrl(config.customWebhookUrl);
     setAlertsEnabled(config.alertsEnabled);
+    setRepeatAlertIntervalSec(config.repeatAlertIntervalSec ?? 30);
+    setLiveSetupMaxMinutes(config.liveSetupMaxMinutes ?? 20);
   }, [config]);
 
   const handleSave = async (e: React.FormEvent) => {
@@ -93,6 +101,8 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
         telegramChatId,
         customWebhookUrl,
         alertsEnabled,
+        repeatAlertIntervalSec,
+        liveSetupMaxMinutes,
       };
       if (telegramBotToken.trim().length > 0) {
         payload.telegramBotToken = telegramBotToken.trim();
@@ -305,9 +315,9 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
 
           <div className="flex items-center justify-between gap-4">
             <div>
-              <span className="text-sm font-medium text-[#F1F5F9]">Alertes automatiques Telegram</span>
+              <span className="text-sm font-medium text-[#F1F5F9]">Alertes EN COURS + Rappels Telegram</span>
               <p className="text-xs text-[#94A3B8]">
-                Envoie un message des qu'une cassure Killzone est suivie d'un CISD contraire M3.
+                Alerte uniquement sur les signaux en cours (&lt; 6 min, jamais l'historique passe) et repete jusqu'a validation (« J'ai vu »).
               </p>
             </div>
             <button
@@ -321,6 +331,36 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
             >
               {alertsEnabled ? 'Activees' : 'Desactivees'}
             </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <label className="flex flex-col gap-1.5 text-xs">
+              <span className="text-[#CBD5E1] font-medium">Rappel si non valide (sec)</span>
+              <input
+                type="number"
+                min={10}
+                max={300}
+                value={repeatAlertIntervalSec}
+                onChange={(e) =>
+                  setRepeatAlertIntervalSec(Math.max(10, Number.parseInt(e.target.value, 10) || 30))
+                }
+                className="bg-[#0B0F17] border border-[#1E293B] rounded-md px-3 py-2 text-sm font-mono tabular-nums text-[#F1F5F9] focus:outline-none focus:border-[#2563EB]"
+              />
+            </label>
+
+            <label className="flex flex-col gap-1.5 text-xs">
+              <span className="text-[#CBD5E1] font-medium">Duree max « En cours » (min)</span>
+              <input
+                type="number"
+                min={5}
+                max={120}
+                value={liveSetupMaxMinutes}
+                onChange={(e) =>
+                  setLiveSetupMaxMinutes(Math.max(5, Number.parseInt(e.target.value, 10) || 20))
+                }
+                className="bg-[#0B0F17] border border-[#1E293B] rounded-md px-3 py-2 text-sm font-mono tabular-nums text-[#F1F5F9] focus:outline-none focus:border-[#2563EB]"
+              />
+            </label>
           </div>
 
           <div className="grid grid-cols-1 gap-4">
