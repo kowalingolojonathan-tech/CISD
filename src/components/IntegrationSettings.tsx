@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import type { EngineSnapshot, TimezoneMode } from '../engine/types';
+import type { EngineSnapshot, HtfBiasMode, TimezoneMode } from '../engine/types';
 
 interface IntegrationSettingsProps {
   snapshot: EngineSnapshot;
@@ -20,6 +20,17 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
   const [expiryBars, setExpiryBars] = useState<number>(config.expiryBars);
   const [liquidityLookback, setLiquidityLookback] = useState<number>(config.liquidityLookback);
   const [kzLookbackBars, setKzLookbackBars] = useState<number>(config.kzLookbackBars);
+  const [requireActiveKillzone, setRequireActiveKillzone] = useState<boolean>(
+    config.requireActiveKillzone
+  );
+  const [triggerOnIntrabar, setTriggerOnIntrabar] = useState<boolean>(config.triggerOnIntrabar);
+  const [dailyBiasMode, setDailyBiasMode] = useState<HtfBiasMode>(config.dailyBiasMode);
+  const [h4BiasMode, setH4BiasMode] = useState<HtfBiasMode>(config.h4BiasMode);
+  const [highProbabilityOnly, setHighProbabilityOnly] = useState<boolean>(
+    config.highProbabilityOnly
+  );
+  const [telegramBotToken, setTelegramBotToken] = useState<string>('');
+  const [showToken, setShowToken] = useState<boolean>(false);
   const [telegramChatId, setTelegramChatId] = useState<string>(config.telegramChatId);
   const [customWebhookUrl, setCustomWebhookUrl] = useState<string>(config.customWebhookUrl);
   const [alertsEnabled, setAlertsEnabled] = useState<boolean>(config.alertsEnabled);
@@ -28,6 +39,22 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
   const [saveFeedback, setSaveFeedback] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const [testFeedback, setTestFeedback] = useState<{ ok: boolean; text: string } | null>(null);
+  const [copiedHealth, setCopiedHealth] = useState(false);
+
+  const healthUrl = `${
+    (snapshot.appUrl && snapshot.appUrl.trim()) ||
+    (typeof window !== 'undefined' ? window.location.origin : '')
+  }/api/health`;
+
+  const handleCopyHealth = async () => {
+    try {
+      await navigator.clipboard.writeText(healthUrl);
+      setCopiedHealth(true);
+      setTimeout(() => setCopiedHealth(false), 2500);
+    } catch {
+      // Ignore clipboard failure in restricted context
+    }
+  };
 
   useEffect(() => {
     setTzMode(config.tzMode);
@@ -36,6 +63,11 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
     setExpiryBars(config.expiryBars);
     setLiquidityLookback(config.liquidityLookback);
     setKzLookbackBars(config.kzLookbackBars);
+    setRequireActiveKillzone(config.requireActiveKillzone);
+    setTriggerOnIntrabar(config.triggerOnIntrabar);
+    setDailyBiasMode(config.dailyBiasMode);
+    setH4BiasMode(config.h4BiasMode);
+    setHighProbabilityOnly(config.highProbabilityOnly);
     setTelegramChatId(config.telegramChatId);
     setCustomWebhookUrl(config.customWebhookUrl);
     setAlertsEnabled(config.alertsEnabled);
@@ -46,18 +78,28 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
     setSaving(true);
     setSaveFeedback(null);
     try {
-      await onSaveConfig({
+      const payload: Record<string, unknown> = {
         tzMode,
         tolerance,
         swingPeriod,
         expiryBars,
         liquidityLookback,
         kzLookbackBars,
+        requireActiveKillzone,
+        triggerOnIntrabar,
+        dailyBiasMode,
+        h4BiasMode,
+        highProbabilityOnly,
         telegramChatId,
         customWebhookUrl,
         alertsEnabled,
-      });
-      setSaveFeedback('Parametres recalcules et sauvegardes.');
+      };
+      if (telegramBotToken.trim().length > 0) {
+        payload.telegramBotToken = telegramBotToken.trim();
+      }
+      await onSaveConfig(payload);
+      setTelegramBotToken('');
+      setSaveFeedback('Configuration Telegram et parametres enregistres sur le serveur.');
     } catch (err) {
       setSaveFeedback(err instanceof Error ? err.message : 'Erreur de sauvegarde');
     } finally {
@@ -90,7 +132,7 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
             Parametres Killzones ICT et CISD M3
           </h2>
           <p className="mt-1 text-xs text-[#94A3B8]">
-            Calibration exacte des deux scripts Pine v6. Toute modification recalcule instantanement l'historique XAU/USD M3.
+            Calibration exacte des deux scripts Pine v6. Les moteurs XAU/USD et EUR/USD surveillent en parallele, le biais D1/H4 s'applique a {config.symbol}.
           </p>
         </div>
 
@@ -173,17 +215,105 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
         </div>
 
         <div className="pt-2 border-t border-[#1E293B] flex flex-col gap-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <span className="text-sm font-medium text-[#F1F5F9]">Killzone active requise</span>
+              <p className="text-xs text-[#94A3B8]">
+                Signale uniquement lorsque le prix evolue pendant une Killzone active (Asia, London, NY AM, NY PM).
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setRequireActiveKillzone((v) => !v)}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-colors shrink-0 cursor-pointer ${
+                requireActiveKillzone
+                  ? 'bg-[#10B981]/15 border-[#10B981]/50 text-[#10B981]'
+                  : 'bg-[#0B0F17] border-[#1E293B] text-[#94A3B8]'
+              }`}
+            >
+              {requireActiveKillzone ? 'Killzone Active' : '24h / Tout horaire'}
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <span className="text-sm font-medium text-[#F1F5F9]">Detection immediate avant reintegration</span>
+              <p className="text-xs text-[#94A3B8]">
+                Alerte en temps reel intrabar M3 des qu'il y a cassure + CISD contraire, sans attendre le retour dans le range.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setTriggerOnIntrabar((v) => !v)}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-colors shrink-0 cursor-pointer ${
+                triggerOnIntrabar
+                  ? 'bg-[#10B981]/15 border-[#10B981]/50 text-[#10B981]'
+                  : 'bg-[#0B0F17] border-[#1E293B] text-[#94A3B8]'
+              }`}
+            >
+              {triggerOnIntrabar ? 'Temps reel Intrabar' : 'Cloture M3 seule'}
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <label className="flex flex-col gap-1.5 text-xs">
+              <span className="text-[#CBD5E1] font-medium">Biais Daily (D1)</span>
+              <select
+                value={dailyBiasMode}
+                onChange={(e) => setDailyBiasMode(e.target.value as HtfBiasMode)}
+                className="bg-[#0B0F17] border border-[#1E293B] rounded-md px-3 py-2 text-sm text-[#F1F5F9] focus:outline-none focus:border-[#2563EB]"
+              >
+                <option value="AUTO">Auto CISD D1 ({snapshot.htfBias.daily})</option>
+                <option value="BULLISH">Manuel : HAUSSIER</option>
+                <option value="BEARISH">Manuel : BAISSIER</option>
+              </select>
+            </label>
+
+            <label className="flex flex-col gap-1.5 text-xs">
+              <span className="text-[#CBD5E1] font-medium">Biais 4 Heures (H4)</span>
+              <select
+                value={h4BiasMode}
+                onChange={(e) => setH4BiasMode(e.target.value as HtfBiasMode)}
+                className="bg-[#0B0F17] border border-[#1E293B] rounded-md px-3 py-2 text-sm text-[#F1F5F9] focus:outline-none focus:border-[#2563EB]"
+              >
+                <option value="AUTO">Auto CISD H4 ({snapshot.htfBias.h4})</option>
+                <option value="BULLISH">Manuel : HAUSSIER</option>
+                <option value="BEARISH">Manuel : BAISSIER</option>
+              </select>
+            </label>
+          </div>
+
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <span className="text-sm font-medium text-[#F1F5F9]">Telegram Haute Probabilite (D1 + H4) uniquement</span>
+              <p className="text-xs text-[#94A3B8]">
+                N'envoie sur Telegram que lorsque le CISD M3 va dans la meme direction que Daily ET H4.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setHighProbabilityOnly((v) => !v)}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-colors shrink-0 cursor-pointer ${
+                highProbabilityOnly
+                  ? 'bg-[#10B981]/15 border-[#10B981]/50 text-[#10B981]'
+                  : 'bg-[#0B0F17] border-[#1E293B] text-[#94A3B8]'
+              }`}
+            >
+              {highProbabilityOnly ? 'D1+H4 Requis' : 'Toutes alertes'}
+            </button>
+          </div>
+
+          <div className="flex items-center justify-between gap-4">
             <div>
               <span className="text-sm font-medium text-[#F1F5F9]">Alertes automatiques Telegram</span>
               <p className="text-xs text-[#94A3B8]">
-                Envoie un message des qu'un niveau Killzone balaye est suivi d'un CISD M3 valide.
+                Envoie un message des qu'une cassure Killzone est suivie d'un CISD contraire M3.
               </p>
             </div>
             <button
               type="button"
               onClick={() => setAlertsEnabled((v) => !v)}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-colors cursor-pointer ${
+              className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-colors shrink-0 cursor-pointer ${
                 alertsEnabled
                   ? 'bg-[#10B981]/15 border-[#10B981]/50 text-[#10B981]'
                   : 'bg-[#0B0F17] border-[#1E293B] text-[#94A3B8]'
@@ -193,28 +323,63 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
             </button>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4">
             <label className="flex flex-col gap-1.5 text-xs">
-              <span className="text-[#CBD5E1] font-medium">Telegram Chat ID</span>
-              <input
-                type="text"
-                value={telegramChatId}
-                onChange={(e) => setTelegramChatId(e.target.value)}
-                placeholder="8755686322"
-                className="bg-[#0B0F17] border border-[#1E293B] rounded-md px-3 py-2 text-sm font-mono tabular-nums text-[#F1F5F9] focus:outline-none focus:border-[#2563EB]"
-              />
+              <div className="flex items-center justify-between">
+                <span className="text-[#CBD5E1] font-medium">
+                  Bot Token Telegram (@BotFather)
+                </span>
+                {config.hasTelegramToken && (
+                  <span className="font-mono text-[11px] text-[#10B981]">
+                    Actif : {config.telegramTokenMasked}
+                  </span>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <input
+                  type={showToken ? 'text' : 'password'}
+                  value={telegramBotToken}
+                  onChange={(e) => setTelegramBotToken(e.target.value)}
+                  placeholder={
+                    config.hasTelegramToken
+                      ? 'Laisser vide pour conserver le token enregistre, ou coller un nouveau'
+                      : 'Ex: 8683387578:AAG9phaBO...'
+                  }
+                  className="flex-1 bg-[#0B0F17] border border-[#1E293B] rounded-md px-3 py-2 text-sm font-mono text-[#F1F5F9] focus:outline-none focus:border-[#2563EB]"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowToken((v) => !v)}
+                  className="px-3 py-2 text-xs bg-[#0B0F17] border border-[#1E293B] hover:border-[#334155] text-[#CBD5E1] rounded-md whitespace-nowrap cursor-pointer"
+                >
+                  {showToken ? 'Masquer' : 'Afficher'}
+                </button>
+              </div>
             </label>
 
-            <label className="flex flex-col gap-1.5 text-xs">
-              <span className="text-[#CBD5E1] font-medium">Webhook JSON externe (optionnel)</span>
-              <input
-                type="url"
-                value={customWebhookUrl}
-                onChange={(e) => setCustomWebhookUrl(e.target.value)}
-                placeholder="https://..."
-                className="bg-[#0B0F17] border border-[#1E293B] rounded-md px-3 py-2 text-sm font-mono text-[#F1F5F9] focus:outline-none focus:border-[#2563EB]"
-              />
-            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <label className="flex flex-col gap-1.5 text-xs">
+                <span className="text-[#CBD5E1] font-medium">Telegram Chat ID</span>
+                <input
+                  type="text"
+                  value={telegramChatId}
+                  onChange={(e) => setTelegramChatId(e.target.value)}
+                  placeholder="8755686322"
+                  className="bg-[#0B0F17] border border-[#1E293B] rounded-md px-3 py-2 text-sm font-mono tabular-nums text-[#F1F5F9] focus:outline-none focus:border-[#2563EB]"
+                />
+              </label>
+
+              <label className="flex flex-col gap-1.5 text-xs">
+                <span className="text-[#CBD5E1] font-medium">Webhook JSON externe (optionnel)</span>
+                <input
+                  type="url"
+                  value={customWebhookUrl}
+                  onChange={(e) => setCustomWebhookUrl(e.target.value)}
+                  placeholder="https://..."
+                  className="bg-[#0B0F17] border border-[#1E293B] rounded-md px-3 py-2 text-sm font-mono text-[#F1F5F9] focus:outline-none focus:border-[#2563EB]"
+                />
+              </label>
+            </div>
           </div>
         </div>
 
@@ -227,7 +392,7 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
             disabled={saving}
             className="px-4 py-2 text-xs font-medium bg-[#2563EB] hover:bg-[#1D4ED8] text-white rounded-md transition-colors cursor-pointer disabled:opacity-50"
           >
-            {saving ? 'Application...' : 'Appliquer et recalculer'}
+            {saving ? 'Enregistrement...' : 'Enregistrer la configuration'}
           </button>
         </div>
       </form>
@@ -236,23 +401,25 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
       <div className="bg-[#111827] border border-[#1E293B] rounded-lg p-5 flex flex-col gap-5">
         <div>
           <h2 className="text-base font-semibold text-[#F1F5F9]">
-            Connectivite Donnees Reelles XAU/USD et Bot Telegram
+            Connectivite Donnees Reelles {config.symbol} et Bot Telegram
           </h2>
           <p className="mt-1 text-xs text-[#94A3B8]">
-            Etat du flux temps reel et verification de livraison vers votre bot Telegram.
+            Etat du flux temps reel (XAU/USD + EUR/USD actifs en simultane) et verification Telegram.
           </p>
         </div>
 
         <div className="border-t border-[#1E293B] divide-y divide-[#1E293B]/60 text-xs">
           <div className="py-3 flex items-center justify-between gap-4">
-            <span className="text-[#94A3B8]">Symbole actif</span>
-            <span className="font-mono font-medium text-[#F1F5F9]">XAU/USD · M3 (3 min)</span>
+            <span className="text-[#94A3B8]">Symbole affiche</span>
+            <span className="font-mono font-medium text-[#F1F5F9]">{config.symbol} · M3 (3 min)</span>
           </div>
           <div className="py-3 flex items-center justify-between gap-4">
             <span className="text-[#94A3B8]">Source de marche</span>
             <span className="font-mono text-[#F1F5F9]">
               {feedStatus.source === 'twelvedata'
-                ? 'Twelve Data XAU/USD 3min'
+                ? `Twelve Data ${config.symbol} 3min`
+                : config.symbol === 'EUR/USD'
+                ? 'EUR/USD 1m→M3 + Spot Swissquote EUR/USD'
                 : 'COMEX Gold 1m→M3 + Spot Swissquote XAU/USD'}
             </span>
           </div>
@@ -279,7 +446,7 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
         <div className="pt-2 border-t border-[#1E293B] flex flex-col gap-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <span className="text-xs text-[#94A3B8]">
-              Envoyer un message de test formatte avec le dernier niveau XAU/USD :
+              Envoyer un message de test formatte avec le dernier niveau {config.symbol} :
             </span>
             <button
               type="button"
@@ -295,6 +462,30 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
               {testFeedback.text}
             </p>
           )}
+        </div>
+
+        <div className="pt-3 border-t border-[#1E293B] flex flex-col gap-2">
+          <h3 className="text-xs font-semibold text-[#10B981]">
+            Anti-Veille 24/7 (Serveur Cloud + Navigateur)
+          </h3>
+          <p className="text-xs text-[#94A3B8] leading-relaxed">
+            L'application maintient un Wake Lock et un heartbeat toutes les 25s tant que l'onglet est ouvert. Pour garder les alertes Telegram actives meme navigateur ferme, ajoutez cet endpoint dans un moniteur gratuit (ex: UptimeRobot ou cron-job.org toutes les 5 min) :
+          </p>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              readOnly
+              value={healthUrl}
+              className="flex-1 bg-[#0B0F17] border border-[#1E293B] rounded-md px-2.5 py-1.5 text-[11px] font-mono text-[#E2E8F0] focus:outline-none"
+            />
+            <button
+              type="button"
+              onClick={() => void handleCopyHealth()}
+              className="px-3 py-1.5 text-xs font-medium bg-[#1E293B] hover:bg-[#334155] text-[#F1F5F9] rounded-md transition-colors whitespace-nowrap cursor-pointer"
+            >
+              {copiedHealth ? 'Copie' : 'Copier URL'}
+            </button>
+          </div>
         </div>
 
         <div className="pt-3 border-t border-[#1E293B]">

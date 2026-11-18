@@ -1,7 +1,13 @@
 import React, { useMemo, useState } from 'react';
-import type { ConfluenceAlert, KillzoneSweepEvent } from '../engine/types';
+import {
+  formatSymbolPrice,
+  type ConfluenceAlert,
+  type KillzoneSweepEvent,
+  type SupportedSymbol,
+} from '../engine/types';
 
 interface ConfluenceTableProps {
+  symbol: SupportedSymbol;
   alerts: ConfluenceAlert[];
   sweeps: KillzoneSweepEvent[];
   onTestWebhook: () => void;
@@ -29,16 +35,18 @@ function formatNyTime(ts: number): string {
 }
 
 export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
+  symbol,
   alerts,
   sweeps,
   onTestWebhook,
   testingWebhook,
 }) => {
-  const [filter, setFilter] = useState<'ALL' | 'BULLISH' | 'BEARISH'>('ALL');
+  const [filter, setFilter] = useState<'ALL' | 'HIGH' | 'BULLISH' | 'BEARISH'>('ALL');
   const [viewMode, setViewMode] = useState<'confluences' | 'sweeps'>('confluences');
 
   const filteredAlerts = useMemo(() => {
     if (filter === 'ALL') return alerts;
+    if (filter === 'HIGH') return alerts.filter((a) => a.probability === 'HIGH');
     return alerts.filter((a) => a.direction === filter);
   }, [alerts, filter]);
 
@@ -77,7 +85,7 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
 
         {viewMode === 'confluences' && (
           <div className="flex items-center gap-1 bg-[#0B0F17] border border-[#1E293B] rounded-md p-0.5">
-            {(['ALL', 'BULLISH', 'BEARISH'] as const).map((f) => (
+            {(['ALL', 'HIGH', 'BULLISH', 'BEARISH'] as const).map((f) => (
               <button
                 key={f}
                 type="button"
@@ -88,7 +96,13 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
                     : 'text-[#64748B] hover:text-[#CBD5E1]'
                 }`}
               >
-                {f === 'ALL' ? 'Tous' : f === 'BULLISH' ? 'Haussier' : 'Baissier'}
+                {f === 'ALL'
+                  ? 'Tous'
+                  : f === 'HIGH'
+                  ? 'Probabilite Elevee'
+                  : f === 'BULLISH'
+                  ? 'Haussier'
+                  : 'Baissier'}
               </button>
             ))}
           </div>
@@ -102,7 +116,7 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
               Aucune confluence balayage Killzone + CISD M3 validee sur l'historique actif pour ce filtre.
             </p>
             <p className="mt-1 text-xs text-[#64748B]">
-              Le moteur surveille en continu chaque cloture M3 de XAU/USD et declenchera Telegram automatiquement.
+              Le moteur surveille en continu chaque cloture M3 de {symbol} et declenchera Telegram automatiquement.
             </p>
             <button
               type="button"
@@ -120,11 +134,12 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
                 <tr className="border-b border-[#1E293B] text-[11px] font-medium text-[#64748B]">
                   <th className="py-2.5 px-4 whitespace-nowrap">Heure NY</th>
                   <th className="py-2.5 px-4 whitespace-nowrap">Direction</th>
-                  <th className="py-2.5 px-4 whitespace-nowrap">Niveau Killzone</th>
-                  <th className="py-2.5 px-4 text-right whitespace-nowrap">Prix Sweep</th>
+                  <th className="py-2.5 px-4 whitespace-nowrap">Probabilite (D1 / H4)</th>
+                  <th className="py-2.5 px-4 whitespace-nowrap">Session Active</th>
+                  <th className="py-2.5 px-4 whitespace-nowrap">Niveau Casse</th>
+                  <th className="py-2.5 px-4 whitespace-nowrap">Position Prix</th>
                   <th className="py-2.5 px-4 text-right whitespace-nowrap">Origine CISD M3</th>
                   <th className="py-2.5 px-4 text-right whitespace-nowrap">Ratio Bruit</th>
-                  <th className="py-2.5 px-4 text-right whitespace-nowrap">Delai</th>
                   <th className="py-2.5 px-4 whitespace-nowrap">Statut Webhook</th>
                 </tr>
               </thead>
@@ -141,24 +156,43 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
                           {isBull ? '▲ HAUSSIER' : '▼ BAISSIER'}
                         </span>
                       </td>
+                      <td className="py-2.5 px-4 whitespace-nowrap">
+                        {a.probability === 'HIGH' ? (
+                          <span className="font-semibold text-[#10B981]">
+                            PROBABILITE ELEVEE · D1+H4
+                          </span>
+                        ) : a.probability === 'MEDIUM' ? (
+                          <span className="text-[#F59E0B]">
+                            Moyenne · D1 {a.dailyBias === 'BULLISH' ? 'H' : a.dailyBias === 'BEARISH' ? 'B' : '-'} / H4{' '}
+                            {a.h4Bias === 'BULLISH' ? 'H' : a.h4Bias === 'BEARISH' ? 'B' : '-'}
+                          </span>
+                        ) : (
+                          <span className="text-[#94A3B8]">Contre-tendance</span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-4 text-[#E2E8F0] whitespace-nowrap">
+                        {a.activeKillzoneName ?? 'Hors KZ'}
+                      </td>
                       <td className="py-2.5 px-4 text-[#E2E8F0] whitespace-nowrap">
                         {a.kzSweep.sessionName} · {a.kzSweep.shortName}.
                         {a.kzSweep.isHigh ? 'H' : 'L'}{' '}
                         <span className="font-mono tabular-nums text-[#94A3B8]">
-                          ({a.kzSweep.level.toFixed(2)})
+                          ({formatSymbolPrice(a.kzSweep.level, a.symbol)})
                         </span>
                       </td>
-                      <td className="py-2.5 px-4 text-right font-mono tabular-nums text-[#F1F5F9] whitespace-nowrap">
-                        {a.kzSweep.sweepPrice.toFixed(2)}
+                      <td className="py-2.5 px-4 whitespace-nowrap">
+                        <span className={a.isPreReentry ? 'text-[#F59E0B] font-medium' : 'text-[#94A3B8]'}>
+                          {a.isPreReentry ? 'Avant reintegration' : 'Reintegre'}
+                        </span>
+                        {a.isIntrabarSignal && (
+                          <span className="text-[#64748B] ml-1.5">· Intrabar</span>
+                        )}
                       </td>
                       <td className="py-2.5 px-4 text-right font-mono tabular-nums text-[#F1F5F9] whitespace-nowrap">
-                        {a.cisd.originLevel.toFixed(2)}
+                        {formatSymbolPrice(a.cisd.originLevel, a.symbol)}
                       </td>
                       <td className="py-2.5 px-4 text-right font-mono tabular-nums text-[#CBD5E1] whitespace-nowrap">
                         {a.cisd.noiseRatio.toFixed(2)} / {a.cisd.toleranceUsed}
-                      </td>
-                      <td className="py-2.5 px-4 text-right font-mono tabular-nums text-[#94A3B8] whitespace-nowrap">
-                        {a.barsBetweenSweepAndCisd} M3
                       </td>
                       <td className="py-2.5 px-4 whitespace-nowrap">
                         <span
@@ -215,10 +249,10 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
                     </span>
                   </td>
                   <td className="py-2.5 px-4 text-right font-mono tabular-nums text-[#F1F5F9] whitespace-nowrap">
-                    {s.level.toFixed(2)}
+                    {formatSymbolPrice(s.level, symbol)}
                   </td>
                   <td className="py-2.5 px-4 text-right font-mono tabular-nums text-[#94A3B8] whitespace-nowrap">
-                    {s.sweepPrice.toFixed(2)}
+                    {formatSymbolPrice(s.sweepPrice, symbol)}
                   </td>
                 </tr>
               ))}

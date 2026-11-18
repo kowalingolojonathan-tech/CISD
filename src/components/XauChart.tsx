@@ -1,15 +1,18 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import type {
-  Candle,
-  CisdSignal,
-  ConfluenceAlert,
-  SessionBox,
-  SwingPivot,
-  TimezoneMode,
-  UnsweptLevel,
+import {
+  formatSymbolPrice,
+  type Candle,
+  type CisdSignal,
+  type ConfluenceAlert,
+  type SessionBox,
+  type SupportedSymbol,
+  type SwingPivot,
+  type TimezoneMode,
+  type UnsweptLevel,
 } from '../engine/types';
 
 interface XauChartProps {
+  symbol: SupportedSymbol;
   candles: Candle[];
   candleTrends: number[];
   sessions: SessionBox[];
@@ -20,6 +23,7 @@ interface XauChartProps {
   tzMode: TimezoneMode;
   onRefresh: () => void;
   refreshing: boolean;
+  onOpenSettings?: () => void;
 }
 
 function formatNyShort(ts: number, tzMode: TimezoneMode): string {
@@ -47,6 +51,7 @@ function formatNyShort(ts: number, tzMode: TimezoneMode): string {
 }
 
 export const XauChart: React.FC<XauChartProps> = ({
+  symbol,
   candles,
   candleTrends,
   sessions,
@@ -57,6 +62,7 @@ export const XauChart: React.FC<XauChartProps> = ({
   tzMode,
   onRefresh,
   refreshing,
+  onOpenSettings,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -131,7 +137,7 @@ export const XauChart: React.FC<XauChartProps> = ({
       if (count <= 0) {
         ctx.fillStyle = '#64748B';
         ctx.font = '13px "Plus Jakarta Sans", sans-serif';
-        ctx.fillText('Chargement des donnees reelles XAU/USD M3...', padLeft + 16, padTop + 40);
+        ctx.fillText(`Chargement des donnees reelles ${symbol} M3...`, padLeft + 16, padTop + 40);
         return;
       }
 
@@ -152,8 +158,9 @@ export const XauChart: React.FC<XauChartProps> = ({
         }
       }
       if (!Number.isFinite(minP) || !Number.isFinite(maxP) || maxP <= minP) {
-        minP -= 2;
-        maxP += 2;
+        const fallbackPad = symbol === 'EUR/USD' ? 0.002 : 2;
+        minP -= fallbackPad;
+        maxP += fallbackPad;
       }
       const priceSpan = maxP - minP;
       minP -= priceSpan * 0.08;
@@ -184,7 +191,7 @@ export const XauChart: React.FC<XauChartProps> = ({
         ctx.stroke();
 
         ctx.fillStyle = '#64748B';
-        ctx.fillText(p.toFixed(2), padLeft + plotW + 8, y);
+        ctx.fillText(formatSymbolPrice(p, symbol), padLeft + plotW + 8, y);
       }
 
       // Vertical time grid
@@ -270,7 +277,7 @@ export const XauChart: React.FC<XauChartProps> = ({
             ctx.textAlign = 'right';
             ctx.textBaseline = 'bottom';
             ctx.fillText(
-              `${lvl.shortName}.${lvl.isHigh ? 'H' : 'L'} ${lvl.level.toFixed(2)}`,
+              `${lvl.shortName}.${lvl.isHigh ? 'H' : 'L'} ${formatSymbolPrice(lvl.level, symbol)}`,
               padLeft + plotW - 6,
               y - 2
             );
@@ -442,7 +449,7 @@ export const XauChart: React.FC<XauChartProps> = ({
         ctx.font = '600 11px "JetBrains Mono", monospace';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
-        ctx.fillText(latest.close.toFixed(2), padLeft + plotW + 7, py);
+        ctx.fillText(formatSymbolPrice(latest.close, symbol), padLeft + plotW + 7, py);
       }
     };
 
@@ -451,6 +458,7 @@ export const XauChart: React.FC<XauChartProps> = ({
     ro.observe(container);
     return () => ro.disconnect();
   }, [
+    symbol,
     candles,
     candleTrends,
     sessions,
@@ -516,14 +524,16 @@ export const XauChart: React.FC<XauChartProps> = ({
       <div className="flex flex-wrap items-center justify-between gap-4 px-4 py-2.5 border-b border-[#1E293B] bg-[#0F1521]">
         <div className="flex items-center gap-3 min-w-0">
           <span className="text-sm font-semibold text-[#F1F5F9] whitespace-nowrap">
-            XAU/USD · M3
+            {symbol} · M3
           </span>
           {hoveredCandle && (
             <div className="hidden lg:flex items-center gap-3 text-xs font-mono tabular-nums text-[#94A3B8]">
-              <span>O {hoveredCandle.open.toFixed(2)}</span>
-              <span>H {hoveredCandle.high.toFixed(2)}</span>
-              <span>L {hoveredCandle.low.toFixed(2)}</span>
-              <span className="text-[#F1F5F9] font-medium">C {hoveredCandle.close.toFixed(2)}</span>
+              <span>O {formatSymbolPrice(hoveredCandle.open, symbol)}</span>
+              <span>H {formatSymbolPrice(hoveredCandle.high, symbol)}</span>
+              <span>L {formatSymbolPrice(hoveredCandle.low, symbol)}</span>
+              <span className="text-[#F1F5F9] font-medium">
+                C {formatSymbolPrice(hoveredCandle.close, symbol)}
+              </span>
               <span aria-hidden="true">·</span>
               <span>{formatNyShort(hoveredCandle.time, tzMode)} NY</span>
               <span aria-hidden="true">·</span>
@@ -593,6 +603,16 @@ export const XauChart: React.FC<XauChartProps> = ({
           >
             {refreshing ? 'Synchronisation...' : 'Actualiser'}
           </button>
+
+          {onOpenSettings && (
+            <button
+              type="button"
+              onClick={onOpenSettings}
+              className="px-3 py-1.5 text-xs font-medium bg-[#0B0F17] border border-[#1E293B] hover:border-[#334155] text-[#CBD5E1] rounded-md transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              Parametres
+            </button>
+          )}
         </div>
       </div>
 

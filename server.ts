@@ -5,63 +5,197 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { TradingConfluenceEngine } from './src/engine/confluence.ts';
-import { XauUsdLiveFeed } from './src/engine/marketFeed.ts';
-import type { EngineConfig } from './src/engine/types.ts';
+import { MarketLiveFeed } from './src/engine/marketFeed.ts';
+import type {
+  EngineConfig,
+  EngineSnapshot,
+  HtfBiasMode,
+  SupportedSymbol,
+  SymbolOverview,
+} from './src/engine/types.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT) || 3000;
 const IS_PROD = process.env.NODE_ENV === 'production';
+const RUNTIME_CONFIG_PATH = path.resolve(__dirname, '.runtime-config.json');
 
-const initialConfig: EngineConfig = {
-  symbol: 'XAU/USD',
-  marketSource: process.env.TWELVEDATA_API_KEY ? 'twelvedata' : 'yahoo_swissquote',
-  twelveDataApiKey: process.env.TWELVEDATA_API_KEY ?? '',
-  tzMode: 'Auto (DST)',
-  tolerance: 0.7,
-  swingPeriod: 12,
-  expiryBars: 100,
-  liquidityLookback: 10,
-  kzLookbackBars: 10,
-  telegramBotToken: process.env.TELEGRAM_BOT_TOKEN ?? '',
-  telegramChatId: process.env.TELEGRAM_CHAT_ID ?? '',
-  customWebhookUrl: '',
-  alertsEnabled: true,
+const SUPPORTED_SYMBOLS: SupportedSymbol[] = ['XAU/USD', 'EUR/USD'];
+
+function resolveSymbol(raw: unknown): SupportedSymbol {
+  return raw === 'EUR/USD' ? 'EUR/USD' : 'XAU/USD';
+}
+
+interface PersistedConfigFile extends Partial<EngineConfig> {
+  htfOverrides?: Partial<
+    Record<
+      SupportedSymbol,
+      {
+        dailyBiasMode?: HtfBiasMode;
+        h4BiasMode?: HtfBiasMode;
+      }
+    >
+  >;
+}
+
+function loadPersistedConfig(): PersistedConfigFile {
+  try {
+    if (fs.existsSync(RUNTIME_CONFIG_PATH)) {
+      const raw = fs.readFileSync(RUNTIME_CONFIG_PATH, 'utf8');
+      return JSON.parse(raw) as PersistedConfigFile;
+    }
+  } catch {
+    // Ignore malformed persisted file
+  }
+  return {};
+}
+
+function savePersistedConfig(
+  sharedCfg: EngineConfig,
+  xauCfg: EngineConfig,
+  eurCfg: EngineConfig
+) {
+  try {
+    const payload: PersistedConfigFile = {
+      tzMode: sharedCfg.tzMode,
+      tolerance: sharedCfg.tolerance,
+      swingPeriod: sharedCfg.swingPeriod,
+      expiryBars: sharedCfg.expiryBars,
+      liquidityLookback: sharedCfg.liquidityLookback,
+      kzLookbackBars: sharedCfg.kzLookbackBars,
+      requireActiveKillzone: sharedCfg.requireActiveKillzone,
+      triggerOnIntrabar: sharedCfg.triggerOnIntrabar,
+      highProbabilityOnly: sharedCfg.highProbabilityOnly,
+      telegramBotToken: sharedCfg.telegramBotToken,
+      telegramChatId: sharedCfg.telegramChatId,
+      customWebhookUrl: sharedCfg.customWebhookUrl,
+      alertsEnabled: sharedCfg.alertsEnabled,
+      htfOverrides: {
+        'XAU/USD': {
+          dailyBiasMode: xauCfg.dailyBiasMode,
+          h4BiasMode: xauCfg.h4BiasMode,
+        },
+        'EUR/USD': {
+          dailyBiasMode: eurCfg.dailyBiasMode,
+          h4BiasMode: eurCfg.h4BiasMode,
+        },
+      },
+    };
+    fs.writeFileSync(RUNTIME_CONFIG_PATH, JSON.stringify(payload, null, 2), 'utf8');
+  } catch {
+    // Non-fatal persistence error
+  }
+}
+
+const persisted = loadPersistedConfig();
+
+function createInitialConfig(symbol: SupportedSymbol): EngineConfig {
+  const htf = persisted.htfOverrides?.[symbol];
+  return {
+    symbol,
+    marketSource: process.env.TWELVEDATA_API_KEY ? 'twelvedata' : 'yahoo_swissquote',
+    twelveDataApiKey: process.env.TWELVEDATA_API_KEY ?? '',
+    tzMode: persisted.tzMode ?? 'Auto (DST)',
+    tolerance: persisted.tolerance ?? 0.7,
+    swingPeriod: persisted.swingPeriod ?? 12,
+    expiryBars: persisted.expiryBars ?? 100,
+    liquidityLookback: persisted.liquidityLookback ?? 10,
+    kzLookbackBars: persisted.kzLookbackBars ?? 10,
+    requireActiveKillzone: persisted.requireActiveKillzone ?? true,
+    triggerOnIntrabar: persisted.triggerOnIntrabar ?? true,
+    dailyBiasMode: htf?.dailyBiasMode ?? (symbol === 'XAU/USD' ? persisted.dailyBiasMode ?? 'AUTO' : 'AUTO'),
+    h4BiasMode: htf?.h4BiasMode ?? (symbol === 'XAU/USD' ? persisted.h4BiasMode ?? 'AUTO' : 'AUTO'),
+    highProbabilityOnly: persisted.highProbabilityOnly ?? false,
+    telegramBotToken: persisted.telegramBotToken || process.env.TELEGRAM_BOT_TOKEN || '',
+    telegramChatId: persisted.telegramChatId || process.env.TELEGRAM_CHAT_ID || '',
+    customWebhookUrl: persisted.customWebhookUrl ?? '',
+    alertsEnabled: persisted.alertsEnabled ?? true,
+  };
+}
+
+const engines: Record<SupportedSymbol, TradingConfluenceEngine> = {
+  'XAU/USD': new TradingConfluenceEngine(createInitialConfig('XAU/USD')),
+  'EUR/USD': new TradingConfluenceEngine(createInitialConfig('EUR/USD')),
 };
 
-const engine = new TradingConfluenceEngine(initialConfig);
-const feed = new XauUsdLiveFeed(engine);
+const feeds: Record<SupportedSymbol, MarketLiveFeed> = {
+  'XAU/USD': new MarketLiveFeed(engines['XAU/USD'], 'XAU/USD'),
+  'EUR/USD': new MarketLiveFeed(engines['EUR/USD'], 'EUR/USD'),
+};
+
+function getSymbolsOverview(): SymbolOverview[] {
+  return SUPPORTED_SYMBOLS.map((sym) => {
+    const snap = engines[sym].getSnapshot();
+    const lastCandle = snap.candles[snap.candles.length - 1];
+    return {
+      symbol: sym,
+      price: lastCandle ? lastCandle.close : null,
+      dailyBias: snap.htfBias.daily,
+      h4Bias: snap.htfBias.h4,
+      confluenceCount: snap.confluenceAlerts.length,
+      highProbCount: snap.confluenceAlerts.filter((a) => a.probability === 'HIGH').length,
+      connected: snap.feedStatus.connected,
+    };
+  });
+}
+
+function buildSnapshot(symbol: SupportedSymbol): EngineSnapshot {
+  const snap = engines[symbol].getSnapshot();
+  return {
+    ...snap,
+    symbolsOverview: getSymbolsOverview(),
+    appUrl: process.env.APP_URL || '',
+  };
+}
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
 
-// Health check
+// Health check & keep-alive endpoint
 app.get('/api/health', (_req: Request, res: Response) => {
-  res.json({ ok: true, symbol: 'XAU/USD' });
+  res.json({
+    ok: true,
+    uptimeSec: Math.round(process.uptime()),
+    symbols: SUPPORTED_SYMBOLS,
+    overview: getSymbolsOverview(),
+  });
 });
 
-// Current full snapshot
-app.get('/api/state', (_req: Request, res: Response) => {
-  res.json(engine.getSnapshot());
+// Current full snapshot for selected symbol
+app.get('/api/state', (req: Request, res: Response) => {
+  const sym = resolveSymbol(req.query.symbol);
+  res.json(buildSnapshot(sym));
 });
 
 // Server-Sent Events stream for real-time M3 candles, sweeps, CISD & confluence alerts
 app.get('/api/stream', (req: Request, res: Response) => {
+  const sym = resolveSymbol(req.query.symbol);
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders?.();
 
   const sendSnapshot = () => {
-    const snap = engine.getSnapshot();
+    const snap = buildSnapshot(sym);
     res.write(`data: ${JSON.stringify(snap)}\n\n`);
   };
 
   sendSnapshot();
 
-  const unsubscribe = engine.subscribe((snap) => {
-    res.write(`data: ${JSON.stringify(snap)}\n\n`);
+  const unsubscribePrimary = engines[sym].subscribe(() => {
+    sendSnapshot();
+  });
+
+  // Also push light overview updates when the secondary symbol ticks
+  const otherSym: SupportedSymbol = sym === 'XAU/USD' ? 'EUR/USD' : 'XAU/USD';
+  let lastOverviewPush = 0;
+  const unsubscribeOther = engines[otherSym].subscribe(() => {
+    const now = Date.now();
+    if (now - lastOverviewPush >= 5000) {
+      lastOverviewPush = now;
+      sendSnapshot();
+    }
   });
 
   const keepAlive = setInterval(() => {
@@ -70,60 +204,89 @@ app.get('/api/stream', (req: Request, res: Response) => {
 
   req.on('close', () => {
     clearInterval(keepAlive);
-    unsubscribe();
+    unsubscribePrimary();
+    unsubscribeOther();
   });
 });
 
 // Update engine / indicator / webhook parameters
 app.post('/api/config', async (req: Request, res: Response) => {
   try {
-    const body = (req.body ?? {}) as Partial<EngineConfig>;
-    const prev = engine.getConfig();
-    const patch: Partial<EngineConfig> = {};
+    const body = (req.body ?? {}) as Partial<EngineConfig> & { symbol?: string };
+    const sym = resolveSymbol(req.query.symbol ?? body.symbol);
+    const prevSource = engines[sym].getConfig().marketSource;
+
+    const sharedPatch: Partial<EngineConfig> = {};
+    const symbolHtfPatch: Partial<EngineConfig> = {};
 
     if (body.marketSource === 'yahoo_swissquote' || body.marketSource === 'twelvedata') {
-      patch.marketSource = body.marketSource;
+      sharedPatch.marketSource = body.marketSource;
     }
     if (
       body.tzMode === 'Auto (DST)' ||
       body.tzMode === 'Manual UTC-4 (EDT)' ||
       body.tzMode === 'Manual UTC-5 (EST)'
     ) {
-      patch.tzMode = body.tzMode;
+      sharedPatch.tzMode = body.tzMode;
     }
     if (typeof body.tolerance === 'number' && body.tolerance >= 0 && body.tolerance <= 1) {
-      patch.tolerance = body.tolerance;
+      sharedPatch.tolerance = body.tolerance;
     }
     if (typeof body.swingPeriod === 'number' && body.swingPeriod >= 3 && body.swingPeriod <= 50) {
-      patch.swingPeriod = Math.round(body.swingPeriod);
+      sharedPatch.swingPeriod = Math.round(body.swingPeriod);
     }
     if (typeof body.expiryBars === 'number' && body.expiryBars >= 20 && body.expiryBars <= 500) {
-      patch.expiryBars = Math.round(body.expiryBars);
+      sharedPatch.expiryBars = Math.round(body.expiryBars);
     }
     if (typeof body.liquidityLookback === 'number' && body.liquidityLookback >= 1 && body.liquidityLookback <= 50) {
-      patch.liquidityLookback = Math.round(body.liquidityLookback);
+      sharedPatch.liquidityLookback = Math.round(body.liquidityLookback);
     }
     if (typeof body.kzLookbackBars === 'number' && body.kzLookbackBars >= 1 && body.kzLookbackBars <= 60) {
-      patch.kzLookbackBars = Math.round(body.kzLookbackBars);
+      sharedPatch.kzLookbackBars = Math.round(body.kzLookbackBars);
+    }
+    if (typeof body.requireActiveKillzone === 'boolean') {
+      sharedPatch.requireActiveKillzone = body.requireActiveKillzone;
+    }
+    if (typeof body.triggerOnIntrabar === 'boolean') {
+      sharedPatch.triggerOnIntrabar = body.triggerOnIntrabar;
+    }
+    if (body.dailyBiasMode === 'AUTO' || body.dailyBiasMode === 'BULLISH' || body.dailyBiasMode === 'BEARISH') {
+      symbolHtfPatch.dailyBiasMode = body.dailyBiasMode;
+    }
+    if (body.h4BiasMode === 'AUTO' || body.h4BiasMode === 'BULLISH' || body.h4BiasMode === 'BEARISH') {
+      symbolHtfPatch.h4BiasMode = body.h4BiasMode;
+    }
+    if (typeof body.highProbabilityOnly === 'boolean') {
+      sharedPatch.highProbabilityOnly = body.highProbabilityOnly;
+    }
+    if (typeof body.telegramBotToken === 'string' && body.telegramBotToken.trim().length > 0) {
+      sharedPatch.telegramBotToken = body.telegramBotToken.trim();
     }
     if (typeof body.telegramChatId === 'string') {
-      patch.telegramChatId = body.telegramChatId;
+      sharedPatch.telegramChatId = body.telegramChatId.trim();
     }
     if (typeof body.customWebhookUrl === 'string') {
-      patch.customWebhookUrl = body.customWebhookUrl;
+      sharedPatch.customWebhookUrl = body.customWebhookUrl.trim();
     }
     if (typeof body.alertsEnabled === 'boolean') {
-      patch.alertsEnabled = body.alertsEnabled;
+      sharedPatch.alertsEnabled = body.alertsEnabled;
     }
 
-    await engine.updateConfig(patch);
+    await Promise.all(
+      SUPPORTED_SYMBOLS.map((s) =>
+        engines[s].updateConfig(s === sym ? { ...sharedPatch, ...symbolHtfPatch } : sharedPatch)
+      )
+    );
 
-    const next = engine.getConfig();
-    if (next.marketSource !== prev.marketSource) {
-      await feed.reload();
+    const xauCfg = engines['XAU/USD'].getConfig();
+    const eurCfg = engines['EUR/USD'].getConfig();
+    savePersistedConfig(xauCfg, xauCfg, eurCfg);
+
+    if (sharedPatch.marketSource && sharedPatch.marketSource !== prevSource) {
+      await Promise.all(SUPPORTED_SYMBOLS.map((s) => feeds[s].reload()));
     }
 
-    res.json({ ok: true, snapshot: engine.getSnapshot() });
+    res.json({ ok: true, snapshot: buildSnapshot(sym) });
   } catch (err) {
     res.status(400).json({
       ok: false,
@@ -132,28 +295,30 @@ app.post('/api/config', async (req: Request, res: Response) => {
   }
 });
 
-// Force refresh real XAU/USD market data
-app.post('/api/feed/refresh', async (_req: Request, res: Response) => {
-  await feed.reload();
-  res.json({ ok: true, snapshot: engine.getSnapshot() });
+// Force refresh real market data for selected symbol
+app.post('/api/feed/refresh', async (req: Request, res: Response) => {
+  const sym = resolveSymbol(req.query.symbol);
+  await feeds[sym].reload();
+  res.json({ ok: true, snapshot: buildSnapshot(sym) });
 });
 
 // Test Telegram / Webhook delivery
-app.post('/api/webhook/test', async (_req: Request, res: Response) => {
-  const result = await engine.sendTestWebhook();
+app.post('/api/webhook/test', async (req: Request, res: Response) => {
+  const sym = resolveSymbol(req.query.symbol);
+  const result = await engines[sym].sendTestWebhook();
   res.json(result);
 });
 
 // Inbound TradingView Webhook forwarder (optional bridge for Pine Script alerts -> Telegram)
 app.post('/api/webhook/tradingview', async (req: Request, res: Response) => {
-  const cfg = engine.getConfig();
+  const cfg = engines['XAU/USD'].getConfig();
   const payload = req.body;
   const text =
     typeof payload === 'string'
       ? payload
       : typeof payload?.message === 'string'
       ? payload.message
-      : `<b>TradingView Webhook XAU/USD</b>\n<pre>${JSON.stringify(payload, null, 2)}</pre>`;
+      : `<b>TradingView Webhook</b>\n<pre>${JSON.stringify(payload, null, 2)}</pre>`;
 
   if (!cfg.telegramBotToken || !cfg.telegramChatId) {
     res.status(400).json({ ok: false, error: 'Telegram Bot Token ou Chat ID non configure' });
@@ -176,6 +341,16 @@ app.post('/api/webhook/tradingview', async (req: Request, res: Response) => {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
   }
 });
+
+function startSelfKeepAlive() {
+  const appUrl = (process.env.APP_URL ?? '').trim().replace(/\/+$/, '');
+  if (!appUrl) return;
+  setInterval(() => {
+    void fetch(`${appUrl}/api/health`).catch(() => {
+      // Ignore transient self-ping network issues
+    });
+  }, 4 * 60 * 1000);
+}
 
 async function startServer() {
   if (!IS_PROD) {
@@ -200,7 +375,9 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Killzone CISD Desk server listening on http://0.0.0.0:${PORT}`);
-    void feed.start();
+    void feeds['XAU/USD'].start();
+    void feeds['EUR/USD'].start();
+    startSelfKeepAlive();
   });
 }
 

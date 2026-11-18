@@ -319,6 +319,130 @@ export class CisdEngine {
     return emittedSignal;
   }
 
+  /**
+   * Non-mutating live evaluation of the current unconfirmed M3 candle so reversals
+   * after a Killzone break are signaled immediately without waiting for bar close.
+   */
+  public previewLiveBar(liveBar: Candle): CisdSignal | null {
+    const barIndex = this.bars.length;
+    if (barIndex < 1) return null;
+
+    const { tolerance, liquidityLookback } = this.params;
+    const prev = this.bars[barIndex - 1];
+
+    const bearStack = [...this.bearPotential];
+    if (prev.close < prev.open && liveBar.close > liveBar.open) {
+      bearStack.unshift({ open: liveBar.open, barIndex });
+    }
+
+    const bullStack = [...this.bullPotential];
+    if (prev.close > prev.open && liveBar.close < liveBar.open) {
+      bullStack.unshift({ open: liveBar.open, barIndex });
+    }
+
+    const getBar = (idx: number): Candle => (idx === barIndex ? liveBar : this.bars[idx]);
+
+    // Check Bearish CISD on liveBar
+    for (const candidate of bearStack) {
+      if (liveBar.close < candidate.open) {
+        let highest = 0;
+        for (let i = 0; i <= barIndex - candidate.barIndex; i++) {
+          const c = getBar(barIndex - i).close;
+          if (c > highest) highest = c;
+        }
+        let init = barIndex - candidate.barIndex + 1;
+        let top = 0;
+        while (init <= barIndex) {
+          const histBar = getBar(barIndex - init);
+          if (histBar.close < histBar.open) {
+            top = histBar.open;
+            init += 1;
+          } else {
+            break;
+          }
+        }
+        const denom = top - candidate.open;
+        const ratio = denom !== 0 ? (highest - candidate.open) / denom : 0;
+        if (denom !== 0 && ratio > tolerance) {
+          const barsSinceHigh =
+            this.lastWickedHighBar !== null ? barIndex - this.lastWickedHighBar : Number.POSITIVE_INFINITY;
+          const strongSweep =
+            barsSinceHigh <= liquidityLookback &&
+            this.lastWickedHighLevel !== null &&
+            liveBar.close < this.lastWickedHighLevel;
+
+          return {
+            id: `live_cisd_bear_${liveBar.time}`,
+            barIndex,
+            time: liveBar.time,
+            direction: 'bearish',
+            originLevel: candidate.open,
+            originBarIndex: candidate.barIndex,
+            noiseRatio: Number(ratio.toFixed(3)),
+            toleranceUsed: tolerance,
+            strongSweep,
+            wickedSwingLevel: this.lastWickedHighLevel,
+            barsSinceSwing: Number.isFinite(barsSinceHigh) ? barsSinceHigh : null,
+            closePrice: liveBar.close,
+          };
+        }
+      } else {
+        break;
+      }
+    }
+
+    // Check Bullish CISD on liveBar
+    for (const candidate of bullStack) {
+      if (liveBar.close > candidate.open) {
+        let lowest = liveBar.close;
+        for (let i = 0; i <= barIndex - candidate.barIndex; i++) {
+          const c = getBar(barIndex - i).close;
+          if (c < lowest) lowest = c;
+        }
+        let init = barIndex - candidate.barIndex + 1;
+        let bottom = 0;
+        while (init <= barIndex) {
+          const histBar = getBar(barIndex - init);
+          if (histBar.close > histBar.open) {
+            bottom = histBar.open;
+            init += 1;
+          } else {
+            break;
+          }
+        }
+        const denom = candidate.open - bottom;
+        const ratio = denom !== 0 ? (candidate.open - lowest) / denom : 0;
+        if (denom !== 0 && ratio > tolerance) {
+          const barsSinceLow =
+            this.lastWickedLowBar !== null ? barIndex - this.lastWickedLowBar : Number.POSITIVE_INFINITY;
+          const strongSweep =
+            barsSinceLow <= liquidityLookback &&
+            this.lastWickedLowLevel !== null &&
+            liveBar.close > this.lastWickedLowLevel;
+
+          return {
+            id: `live_cisd_bull_${liveBar.time}`,
+            barIndex,
+            time: liveBar.time,
+            direction: 'bullish',
+            originLevel: candidate.open,
+            originBarIndex: candidate.barIndex,
+            noiseRatio: Number(ratio.toFixed(3)),
+            toleranceUsed: tolerance,
+            strongSweep,
+            wickedSwingLevel: this.lastWickedLowLevel,
+            barsSinceSwing: Number.isFinite(barsSinceLow) ? barsSinceLow : null,
+            closePrice: liveBar.close,
+          };
+        }
+      } else {
+        break;
+      }
+    }
+
+    return null;
+  }
+
   public getCurrentTrend(): number {
     return this.trend;
   }

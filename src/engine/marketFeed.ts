@@ -1,10 +1,22 @@
 import { TradingConfluenceEngine } from './confluence.ts';
-import type { Candle } from './types.ts';
+import { getPriceDecimals, type Candle, type SupportedSymbol } from './types.ts';
 
 const THREE_MIN_MS = 3 * 60 * 1000;
 
 function align3m(timestampMs: number): number {
   return Math.floor(timestampMs / THREE_MIN_MS) * THREE_MIN_MS;
+}
+
+function roundPrice(val: number, symbol: SupportedSymbol): number {
+  return Number(val.toFixed(getPriceDecimals(symbol)));
+}
+
+function getYahooTicker(symbol: SupportedSymbol): string {
+  return symbol === 'EUR/USD' ? 'EURUSD=X' : 'GC=F';
+}
+
+function getSwissquotePath(symbol: SupportedSymbol): string {
+  return symbol === 'EUR/USD' ? 'EUR/USD' : 'XAU/USD';
 }
 
 interface YahooChartResponse {
@@ -51,12 +63,13 @@ interface TwelveDataResponse {
   }>;
 }
 
-/**
- * Fetches real 1m COMEX Gold (GC=F) candles from Yahoo Finance and aggregates them
- * into exact 3-minute (M3) OHLCV bars, keeping full 5-day history across all Killzones.
- */
-async function fetchYahooXauM3History(): Promise<{ confirmed: Candle[]; live: Candle | null }> {
-  const url = 'https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval=1m&range=5d';
+async function fetchYahooM3History(
+  symbol: SupportedSymbol
+): Promise<{ confirmed: Candle[]; live: Candle | null }> {
+  const ticker = getYahooTicker(symbol);
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
+    ticker
+  )}?interval=1m&range=5d`;
   const res = await fetch(url, {
     headers: {
       'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
@@ -65,13 +78,13 @@ async function fetchYahooXauM3History(): Promise<{ confirmed: Candle[]; live: Ca
   });
 
   if (!res.ok) {
-    throw new Error(`Yahoo Finance HTTP ${res.status}`);
+    throw new Error(`Yahoo Finance (${ticker}) HTTP ${res.status}`);
   }
 
   const json = (await res.json()) as YahooChartResponse;
   const result = json.chart?.result?.[0];
   if (!result || !result.timestamp || !result.indicators?.quote?.[0]) {
-    throw new Error(json.chart?.error?.description ?? 'Donnees GC=F indisponibles');
+    throw new Error(json.chart?.error?.description ?? `Donnees ${symbol} indisponibles`);
   }
 
   const ts = result.timestamp;
@@ -94,24 +107,24 @@ async function fetchYahooXauM3History(): Promise<{ confirmed: Candle[]; live: Ca
     if (!existing) {
       buckets.set(bucketTime, {
         time: bucketTime,
-        open: Number(o.toFixed(2)),
-        high: Number(h.toFixed(2)),
-        low: Number(l.toFixed(2)),
-        close: Number(c.toFixed(2)),
+        open: roundPrice(o, symbol),
+        high: roundPrice(h, symbol),
+        low: roundPrice(l, symbol),
+        close: roundPrice(c, symbol),
         volume: v,
         confirmed: true,
       });
     } else {
-      existing.high = Number(Math.max(existing.high, h).toFixed(2));
-      existing.low = Number(Math.min(existing.low, l).toFixed(2));
-      existing.close = Number(c.toFixed(2));
+      existing.high = roundPrice(Math.max(existing.high, h), symbol);
+      existing.low = roundPrice(Math.min(existing.low, l), symbol);
+      existing.close = roundPrice(c, symbol);
       existing.volume = (existing.volume ?? 0) + v;
     }
   }
 
   const sorted = Array.from(buckets.values()).sort((a, b) => a.time - b.time);
   if (sorted.length === 0) {
-    throw new Error('Aucune bougie M3 valide retournee');
+    throw new Error(`Aucune bougie M3 valide pour ${symbol}`);
   }
 
   const nowBucket = align3m(Date.now());
@@ -130,13 +143,12 @@ async function fetchYahooXauM3History(): Promise<{ confirmed: Candle[]; live: Ca
   };
 }
 
-/**
- * Fetches real-time institutional Spot XAU/USD Bid/Ask mid price from Swissquote public BBO feed.
- */
-async function fetchSwissquoteSpotPrice(): Promise<number | null> {
+async function fetchSwissquoteSpotPrice(symbol: SupportedSymbol): Promise<number | null> {
   try {
     const res = await fetch(
-      'https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XAU/USD',
+      `https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/${getSwissquotePath(
+        symbol
+      )}`,
       { headers: { Accept: 'application/json' } }
     );
     if (!res.ok) return null;
@@ -145,7 +157,7 @@ async function fetchSwissquoteSpotPrice(): Promise<number | null> {
     if (!prices || prices.length === 0) return null;
     const prime = prices.find((p) => p.spreadProfile === 'prime') ?? prices[0];
     if (typeof prime.bid === 'number' && typeof prime.ask === 'number') {
-      return Number(((prime.bid + prime.ask) / 2).toFixed(2));
+      return roundPrice((prime.bid + prime.ask) / 2, symbol);
     }
     return null;
   } catch {
@@ -153,13 +165,13 @@ async function fetchSwissquoteSpotPrice(): Promise<number | null> {
   }
 }
 
-/**
- * Fetches real M3 candles directly for XAU/USD via Twelve Data when user provides an API key.
- */
-async function fetchTwelveDataXauM3(apiKey: string): Promise<{ confirmed: Candle[]; live: Candle | null }> {
-  const url = `https://api.twelvedata.com/time_series?symbol=XAU/USD&interval=3min&outputsize=500&timezone=UTC&apikey=${encodeURIComponent(
-    apiKey.trim()
-  )}`;
+async function fetchTwelveDataM3(
+  symbol: SupportedSymbol,
+  apiKey: string
+): Promise<{ confirmed: Candle[]; live: Candle | null }> {
+  const url = `https://api.twelvedata.com/time_series?symbol=${encodeURIComponent(
+    symbol
+  )}&interval=3min&outputsize=500&timezone=UTC&apikey=${encodeURIComponent(apiKey.trim())}`;
   const res = await fetch(url);
   if (!res.ok) {
     throw new Error(`Twelve Data HTTP ${res.status}`);
@@ -174,10 +186,10 @@ async function fetchTwelveDataXauM3(apiKey: string): Promise<{ confirmed: Candle
       const iso = v.datetime.includes('T') ? `${v.datetime}Z` : `${v.datetime.replace(' ', 'T')}Z`;
       return {
         time: Date.parse(iso),
-        open: Number.parseFloat(v.open),
-        high: Number.parseFloat(v.high),
-        low: Number.parseFloat(v.low),
-        close: Number.parseFloat(v.close),
+        open: roundPrice(Number.parseFloat(v.open), symbol),
+        high: roundPrice(Number.parseFloat(v.high), symbol),
+        low: roundPrice(Number.parseFloat(v.low), symbol),
+        close: roundPrice(Number.parseFloat(v.close), symbol),
         volume: v.volume ? Number.parseFloat(v.volume) : 0,
         confirmed: true,
       };
@@ -186,7 +198,7 @@ async function fetchTwelveDataXauM3(apiKey: string): Promise<{ confirmed: Candle
     .sort((a, b) => a.time - b.time);
 
   if (bars.length === 0) {
-    throw new Error('Aucune bougie Twelve Data XAU/USD');
+    throw new Error(`Aucune bougie Twelve Data ${symbol}`);
   }
 
   const nowBucket = align3m(Date.now());
@@ -198,16 +210,83 @@ async function fetchTwelveDataXauM3(apiKey: string): Promise<{ confirmed: Candle
   return { confirmed: bars, live: null };
 }
 
-export class XauUsdLiveFeed {
+async function fetchYahooHtfHistory(
+  symbol: SupportedSymbol
+): Promise<{ d1Bars: Candle[]; h4Bars: Candle[] }> {
+  const ticker = encodeURIComponent(getYahooTicker(symbol));
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
+    Accept: 'application/json',
+  };
+
+  const [d1Res, h1Res] = await Promise.all([
+    fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=6mo`, {
+      headers,
+    }),
+    fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1h&range=1mo`, {
+      headers,
+    }),
+  ]);
+
+  const parseYahoo = (json: YahooChartResponse): Candle[] => {
+    const r = json.chart?.result?.[0];
+    if (!r?.timestamp || !r.indicators?.quote?.[0]) return [];
+    const ts = r.timestamp;
+    const q = r.indicators.quote[0];
+    const out: Candle[] = [];
+    for (let i = 0; i < ts.length; i++) {
+      const o = q.open?.[i];
+      const h = q.high?.[i];
+      const l = q.low?.[i];
+      const c = q.close?.[i];
+      if (o == null || h == null || l == null || c == null) continue;
+      out.push({
+        time: ts[i] * 1000,
+        open: roundPrice(o, symbol),
+        high: roundPrice(h, symbol),
+        low: roundPrice(l, symbol),
+        close: roundPrice(c, symbol),
+        volume: q.volume?.[i] ?? 0,
+        confirmed: true,
+      });
+    }
+    return out.sort((a, b) => a.time - b.time);
+  };
+
+  const d1Bars = d1Res.ok ? parseYahoo((await d1Res.json()) as YahooChartResponse) : [];
+  const h1Bars = h1Res.ok ? parseYahoo((await h1Res.json()) as YahooChartResponse) : [];
+
+  const fourHourMs = 4 * 3600 * 1000;
+  const h4Map = new Map<number, Candle>();
+  for (const b of h1Bars) {
+    const bucket = Math.floor(b.time / fourHourMs) * fourHourMs;
+    const existing = h4Map.get(bucket);
+    if (!existing) {
+      h4Map.set(bucket, { ...b, time: bucket });
+    } else {
+      existing.high = roundPrice(Math.max(existing.high, b.high), symbol);
+      existing.low = roundPrice(Math.min(existing.low, b.low), symbol);
+      existing.close = b.close;
+      existing.volume = (existing.volume ?? 0) + (b.volume ?? 0);
+    }
+  }
+  const h4Bars = Array.from(h4Map.values()).sort((a, b) => a.time - b.time);
+
+  return { d1Bars, h4Bars };
+}
+
+export class MarketLiveFeed {
   private engine: TradingConfluenceEngine;
+  private symbol: SupportedSymbol;
   private tickTimer: NodeJS.Timeout | null = null;
   private historySyncTimer: NodeJS.Timeout | null = null;
   private currentLiveBar: Candle | null = null;
   private lastKnownClose = 0;
   private isRunning = false;
 
-  constructor(engine: TradingConfluenceEngine) {
+  constructor(engine: TradingConfluenceEngine, symbol: SupportedSymbol) {
     this.engine = engine;
+    this.symbol = symbol;
   }
 
   public async start() {
@@ -215,12 +294,10 @@ export class XauUsdLiveFeed {
     this.isRunning = true;
     await this.loadInitialHistory();
 
-    // Poll real-time Spot XAU/USD price every 3 seconds to build live M3 candle ticks
     this.tickTimer = setInterval(() => {
       void this.pollSpotTick();
     }, 3000);
 
-    // Periodically reconcile M3 history every 60 seconds
     this.historySyncTimer = setInterval(() => {
       void this.syncLatestBars();
     }, 60000);
@@ -245,10 +322,12 @@ export class XauUsdLiveFeed {
   private async loadInitialHistory() {
     const cfg = this.engine.getConfig();
     try {
-      const data =
+      const [data, htf] = await Promise.all([
         cfg.marketSource === 'twelvedata' && cfg.twelveDataApiKey.trim()
-          ? await fetchTwelveDataXauM3(cfg.twelveDataApiKey)
-          : await fetchYahooXauM3History();
+          ? fetchTwelveDataM3(this.symbol, cfg.twelveDataApiKey)
+          : fetchYahooM3History(this.symbol),
+        fetchYahooHtfHistory(this.symbol).catch(() => ({ d1Bars: [], h4Bars: [] })),
+      ]);
 
       this.currentLiveBar = data.live;
       if (data.live) {
@@ -257,6 +336,7 @@ export class XauUsdLiveFeed {
         this.lastKnownClose = data.confirmed[data.confirmed.length - 1].close;
       }
 
+      this.engine.loadHtfHistory(htf.d1Bars, htf.h4Bars, false);
       this.engine.loadHistory(data.confirmed, data.live);
       this.engine.setFeedStatus(true, Date.now(), null);
     } catch (err) {
@@ -267,12 +347,7 @@ export class XauUsdLiveFeed {
 
   private async pollSpotTick() {
     if (!this.isRunning) return;
-    const cfg = this.engine.getConfig();
-    if (cfg.marketSource === 'twelvedata' && cfg.twelveDataApiKey.trim()) {
-      // Twelve Data relies on 3min poll in syncLatestBars; still update Swissquote tick for live movement
-    }
-
-    const spotPrice = await fetchSwissquoteSpotPrice();
+    const spotPrice = await fetchSwissquoteSpotPrice(this.symbol);
     if (spotPrice === null) return;
 
     const bucket = align3m(Date.now());
@@ -294,7 +369,6 @@ export class XauUsdLiveFeed {
     }
 
     if (bucket > this.currentLiveBar.time) {
-      // Previous M3 bar has closed! Confirm it first, then open new M3 bar
       const closedBar: Candle = { ...this.currentLiveBar, confirmed: true };
       await this.engine.ingestLiveBar(closedBar, true);
 
@@ -311,8 +385,8 @@ export class XauUsdLiveFeed {
     } else {
       this.currentLiveBar = {
         ...this.currentLiveBar,
-        high: Number(Math.max(this.currentLiveBar.high, spotPrice).toFixed(2)),
-        low: Number(Math.min(this.currentLiveBar.low, spotPrice).toFixed(2)),
+        high: roundPrice(Math.max(this.currentLiveBar.high, spotPrice), this.symbol),
+        low: roundPrice(Math.min(this.currentLiveBar.low, spotPrice), this.symbol),
         close: spotPrice,
         confirmed: false,
       };
@@ -326,10 +400,16 @@ export class XauUsdLiveFeed {
     if (!this.isRunning) return;
     const cfg = this.engine.getConfig();
     try {
-      const data =
+      const [data, htf] = await Promise.all([
         cfg.marketSource === 'twelvedata' && cfg.twelveDataApiKey.trim()
-          ? await fetchTwelveDataXauM3(cfg.twelveDataApiKey)
-          : await fetchYahooXauM3History();
+          ? fetchTwelveDataM3(this.symbol, cfg.twelveDataApiKey)
+          : fetchYahooM3History(this.symbol),
+        fetchYahooHtfHistory(this.symbol).catch(() => ({ d1Bars: [], h4Bars: [] })),
+      ]);
+
+      if (htf.d1Bars.length > 0 || htf.h4Bars.length > 0) {
+        this.engine.loadHtfHistory(htf.d1Bars, htf.h4Bars, true);
+      }
 
       const snap = this.engine.getSnapshot();
       const lastConfirmedTime =

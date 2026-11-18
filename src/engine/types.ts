@@ -1,5 +1,15 @@
 export type TimezoneMode = 'Auto (DST)' | 'Manual UTC-4 (EDT)' | 'Manual UTC-5 (EST)';
 
+export type SupportedSymbol = 'XAU/USD' | 'EUR/USD';
+
+export function getPriceDecimals(symbol: string): number {
+  return symbol === 'EUR/USD' ? 5 : 2;
+}
+
+export function formatSymbolPrice(price: number, symbol: string): string {
+  return price.toFixed(getPriceDecimals(symbol));
+}
+
 export type SessionId = 'asia' | 'london' | 'nyam' | 'nypm';
 
 export interface Candle {
@@ -104,16 +114,38 @@ export interface CisdSignal {
   closePrice: number;
 }
 
+export type HtfBiasDirection = 'BULLISH' | 'BEARISH' | 'NEUTRAL';
+export type HtfBiasMode = 'AUTO' | 'BULLISH' | 'BEARISH';
+export type ProbabilityTier = 'HIGH' | 'MEDIUM' | 'COUNTER_TREND';
+
+export interface HtfBiasState {
+  daily: HtfBiasDirection;
+  h4: HtfBiasDirection;
+  dailyMode: HtfBiasMode;
+  h4Mode: HtfBiasMode;
+  dailyOriginLevel: number | null;
+  h4OriginLevel: number | null;
+  dailyLastTime: number | null;
+  h4LastTime: number | null;
+  alignedDirection: HtfBiasDirection | null; // non-null when D1 == H4 != NEUTRAL
+}
+
 export interface ConfluenceAlert {
   id: string;
   timestamp: number;
   nyTimeStr: string;
   symbol: string;
   direction: 'BEARISH' | 'BULLISH';
+  activeKillzoneName: string | null;
+  dailyBias: HtfBiasDirection;
+  h4Bias: HtfBiasDirection;
+  probability: ProbabilityTier;
   kzSweep: KillzoneSweepEvent;
   cisd: CisdSignal;
   barsBetweenSweepAndCisd: number;
   closedInsideLevel: boolean;
+  isPreReentry: boolean; // true = price has NOT yet re-entered inside the broken KZ level
+  isIntrabarSignal: boolean; // true = fired live before M3 candle close
   hasInternalSwingSweep: boolean;
   webhookStatus: 'pending' | 'sent' | 'skipped' | 'failed';
   webhookDetail?: string;
@@ -131,8 +163,14 @@ export interface EngineConfig {
   swingPeriod: number; // default 12
   expiryBars: number; // default 100
   liquidityLookback: number; // default 10 (M3 bars)
-  // Confluence
+  // Confluence & Killzone filtering
   kzLookbackBars: number; // default 10 (M3 bars = 30 min)
+  requireActiveKillzone: boolean; // true = signal only when price/time is inside an active Killzone
+  triggerOnIntrabar: boolean; // true = signal immediately on live M3 tick before bar close
+  // HTF Bias (Daily & H4)
+  dailyBiasMode: HtfBiasMode;
+  h4BiasMode: HtfBiasMode;
+  highProbabilityOnly: boolean; // true = only dispatch Telegram when M3 CISD aligns with BOTH D1 & H4
   // Telegram / Webhook
   telegramBotToken: string;
   telegramChatId: string;
@@ -157,12 +195,23 @@ export interface KillzoneDaySummary {
   direction: 'up' | 'down' | 'flat';
 }
 
+export interface SymbolOverview {
+  symbol: SupportedSymbol;
+  price: number | null;
+  dailyBias: HtfBiasDirection;
+  h4Bias: HtfBiasDirection;
+  confluenceCount: number;
+  highProbCount: number;
+  connected: boolean;
+}
+
 export interface EngineSnapshot {
   config: Omit<EngineConfig, 'telegramBotToken' | 'twelveDataApiKey'> & {
     hasTelegramToken: boolean;
     telegramTokenMasked: string;
     hasTwelveDataKey: boolean;
   };
+  htfBias: HtfBiasState;
   candles: Candle[];
   candleTrends: number[]; // 1, -1, or 0 aligned with candles
   sessions: SessionBox[];
@@ -180,4 +229,6 @@ export interface EngineSnapshot {
     lastError: string | null;
     barCount: number;
   };
+  symbolsOverview?: SymbolOverview[];
+  appUrl?: string;
 }

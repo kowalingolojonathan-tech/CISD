@@ -1,4 +1,4 @@
-import type { ConfluenceAlert } from './types.ts';
+import { formatSymbolPrice, type ConfluenceAlert } from './types.ts';
 
 export interface WebhookDispatchResult {
   sent: boolean;
@@ -6,22 +6,42 @@ export interface WebhookDispatchResult {
   detail: string;
 }
 
+function biasFr(b: 'BULLISH' | 'BEARISH' | 'NEUTRAL'): string {
+  return b === 'BULLISH' ? 'HAUSSIER' : b === 'BEARISH' ? 'BAISSIER' : 'NEUTRE';
+}
+
 export function formatTelegramMessage(alert: ConfluenceAlert): string {
-  const dirLabel = alert.direction === 'BULLISH' ? 'BULLISH REVERSAL' : 'BEARISH REVERSAL';
+  const fmt = (p: number) => formatSymbolPrice(p, alert.symbol);
+  const dirLabel = alert.direction === 'BULLISH' ? 'RETOURNEMENT HAUSSIER' : 'RETOURNEMENT BAISSIER';
   const arrow = alert.direction === 'BULLISH' ? '▲' : '▼';
   const sweepType = alert.kzSweep.isHigh ? `${alert.kzSweep.shortName}.H` : `${alert.kzSweep.shortName}.L`;
+  const phaseLabel = alert.isPreReentry
+    ? 'AVANT REINTEGRATION (Prix encore hors niveau)'
+    : 'REINTEGRATION CONFIRMEE';
+  const timingLabel = alert.isIntrabarSignal ? 'Temps reel (Intrabar M3)' : 'Cloture M3 confirmee';
+  const sessionLabel = alert.activeKillzoneName ?? 'Hors Killzone';
+  const probHeader =
+    alert.probability === 'HIGH'
+      ? `<b>★ PROBABILITE ELEVEE (Alignement Daily + H4) ★</b>\n`
+      : alert.probability === 'MEDIUM'
+      ? `<b>Probabilite Moyenne (1/2 HTF aligne)</b>\n`
+      : `<b>Contre-Tendance HTF</b>\n`;
   const swingLine = alert.hasInternalSwingSweep
-    ? `\n• <b>Swing Sweep AlgoAlpha :</b> Confirme (${alert.cisd.wickedSwingLevel?.toFixed(2) ?? '-'})`
+    ? `\n• <b>Swing Sweep AlgoAlpha :</b> Confirme (${
+        alert.cisd.wickedSwingLevel !== null ? fmt(alert.cisd.wickedSwingLevel) : '-'
+      })`
     : '';
 
   return [
-    `<b>${arrow} CONFLUENCE ICT — ${alert.symbol} M3</b>`,
+    `${probHeader}<b>${arrow} SIGNAL CONFLUENCE — ${alert.symbol} M3</b>`,
     `<b>Direction :</b> ${dirLabel}`,
-    `<b>Killzone Swept :</b> ${alert.kzSweep.sessionName} (${sweepType}) @ <code>${alert.kzSweep.level.toFixed(2)}</code>`,
-    `<b>Prix de Sweep :</b> <code>${alert.kzSweep.sweepPrice.toFixed(2)}</code>`,
-    `<b>CISD M3 Origin :</b> <code>${alert.cisd.originLevel.toFixed(2)}</code> (Cloture: <code>${alert.cisd.closePrice.toFixed(2)}</code>)`,
-    `<b>Ratio Bruit CISD :</b> <code>${alert.cisd.noiseRatio.toFixed(2)}</code> (&gt; ${alert.cisd.toleranceUsed})`,
-    `<b>Delai Sweep → CISD :</b> ${alert.barsBetweenSweepAndCisd} bougie(s) M3${swingLine}`,
+    `<b>Biais HTF :</b> Daily <code>${biasFr(alert.dailyBias)}</code> · H4 <code>${biasFr(alert.h4Bias)}</code>`,
+    `<b>Killzone Active :</b> ${sessionLabel}`,
+    `<b>Cassure Niveau :</b> ${alert.kzSweep.sessionName} (${sweepType}) @ <code>${fmt(alert.kzSweep.level)}</code>`,
+    `<b>Prix Actuel / Sweep :</b> <code>${fmt(alert.cisd.closePrice)}</code> (Meche: <code>${fmt(alert.kzSweep.sweepPrice)}</code>)`,
+    `<b>Position Prix :</b> ${phaseLabel}`,
+    `<b>CISD M3 Contraire :</b> Origine <code>${fmt(alert.cisd.originLevel)}</code> · Ratio <code>${alert.cisd.noiseRatio.toFixed(2)}</code> (&gt; ${alert.cisd.toleranceUsed})`,
+    `<b>Declenchement :</b> ${timingLabel} · Delai ${alert.barsBetweenSweepAndCisd} bougie(s) M3${swingLine}`,
     `<b>Heure NY :</b> <code>${alert.nyTimeStr}</code>`,
   ].join('\n');
 }

@@ -373,6 +373,41 @@ export class KillzonesEngine {
     return newSweeps;
   }
 
+  public getActiveSessionAt(timestampMs: number): SessionConfig | null {
+    const ny = getNyDateTime(timestampMs, this.tzMode);
+    for (const slot of this.slots) {
+      if (!slot.config.enabled) continue;
+      const { startMins, endMins } = parseSessionRange(slot.config.range);
+      if (ny.minsOfDay >= startMins && ny.minsOfDay < endMins) {
+        return slot.config;
+      }
+    }
+    return null;
+  }
+
+  public previewLiveSweeps(liveBar: Candle, liveBarIndex: number): KillzoneSweepEvent[] {
+    const hits: KillzoneSweepEvent[] = [];
+    for (const lvl of this.unsweptLevels) {
+      if (lvl.swept) continue;
+      const touched = lvl.isHigh ? liveBar.high >= lvl.level : liveBar.low <= lvl.level;
+      if (touched) {
+        hits.push({
+          id: `live_swp_${lvl.id}`,
+          levelId: lvl.id,
+          sessionId: lvl.sessionId,
+          sessionName: lvl.sessionName,
+          shortName: lvl.shortName,
+          isHigh: lvl.isHigh,
+          level: lvl.level,
+          sweptAt: liveBar.time,
+          sweptBarIndex: liveBarIndex,
+          sweepPrice: lvl.isHigh ? liveBar.high : liveBar.low,
+        });
+      }
+    }
+    return hits;
+  }
+
   public getBoxes(): SessionBox[] {
     return this.boxes;
   }
