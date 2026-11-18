@@ -1,0 +1,103 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      server_url:
+        description: "Adresse du serveur pré-remplie dans l'APK (https://...). Optionnel."
+        required: false
+        type: string
+
+permissions:
+  contents: write   # needed to publish the APK on the Releases page
+
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Detect Firebase config (needed for push notifications)
+        id: firebase
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Secret GOOGLE_SERVICES_JSON absent: l'APK sera construit SANS notifications push."
+          fi
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Engine tests (DST, signal pipeline, market feed, push)
+        run: npm test
+
+      - name: Build web assets
+        env:
+          VITE_PUSH_ENABLED: ${{ steps.firebase.outputs.enabled }}
+          VITE_SERVER_URL: ${{ inputs.server_url || vars.SERVER_URL }}
+        run: npm run build
+
+      - name: Create Android project
+        run: npx cap add android
+
+      - name: Add Firebase config
+        if: steps.firebase.outputs.enabled == 'true'
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: printf '%s' "$GOOGLE_SERVICES_JSON" > android/app/google-services.json
+
+      - name: Patch Android project
+        run: node scripts/patch-android.mjs
+
+      - name: Sync web assets into Android
+        run: npx cap sync android
+
+      # Same signing key on every build => a new APK installs over the previous one.
+      - name: Use stable signing key
+        run: |
+          mkdir -p ~/.android
+          cp android-signing/debug.keystore ~/.android/debug.keystore
+
+      - name: Build APK
+        working-directory: android
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Name the APK
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk killzone-cisd-desk.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: killzone-cisd-desk-apk
+          path: killzone-cisd-desk.apk
+          retention-days: 30
+
+      - name: Publish on the Releases page
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'latest-apk' }}
+          name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'APK le plus récent' }}
+          prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          files: killzone-cisd-desk.apk

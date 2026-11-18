@@ -1,0 +1,13 @@
+{
+  "appId": "com.cisd.killzonedesk",
+  "appName": "Killzone CISD Desk",
+  "webDir": "dist",
+  "backgroundColor": "#0B0F17",
+  "android": {
+    "allowMixedContent": true
+  },
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  }
+}
