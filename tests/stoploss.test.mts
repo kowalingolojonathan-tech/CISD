@@ -31,10 +31,20 @@ first.ackStatus = 'pending';
 (engine as any).invalidateStoppedSetups(bar(now + 3 * 60_000, 1.0960));
 if (first.ackStatus !== 'invalidated' || first.nextReminderAt !== null) throw new Error('SL touch must invalidate setup and stop reminders');
 if (first.retryUntil !== now + 63 * 60_000) throw new Error('Retry window must last 60 minutes after SL touch');
-const retry = (engine as any).evaluateConfluence(bar(now + 6 * 60_000, 1.0950), 12, cisd(now + 6 * 60_000), sweep, null, false, 'M3');
-if (!retry) throw new Error('A replacement CISD within the 60-minute window must be accepted');
-const tooLate = (engine as any).evaluateConfluence(bar(now + 64 * 60_000, 1.0950), 13, cisd(now + 64 * 60_000), sweep, null, false, 'M3');
-if (tooLate !== null) throw new Error('The old sweep must be rejected after the 60-minute retry window');
+const retrySweep: KillzoneSweepEvent = {
+  ...sweep, id: 'sw-retry', levelId: sweep.levelId, sweptAt: now + 4 * 60_000,
+  createdAt: now + 3 * 60_000, sweptBarIndex: 11, sweepPrice: 1.0962,
+};
+(engine as any).kzEngine.getSweepEvents = () => [sweep, retrySweep];
+const retry = (engine as any).evaluateConfluence(bar(now + 6 * 60_000, 1.0950), 12, cisd(now + 6 * 60_000), retrySweep, null, false, 'M3');
+if (!retry) throw new Error('A new matching-side sweep and CISD within 60 minutes must be accepted');
+const oppositeCisd: CisdSignal = { ...cisd(now + 7 * 60_000), id: 'opposite', direction: 'bullish' };
+const oppositeDuringRetry = (engine as any).evaluateConfluence(
+  bar(now + 7 * 60_000, 1.0950), 13, oppositeCisd, null, { ...retrySweep, id: 'sw-low-opposite', levelId: 'low-opposite', isHigh: false }, true, 'M3'
+);
+if (oppositeDuringRetry !== null) throw new Error('Opposite-direction CISD must be ignored during the active retry window');
+const tooLate = (engine as any).evaluateConfluence(bar(now + 64 * 60_000, 1.0950), 14, cisd(now + 64 * 60_000), retrySweep, null, false, 'M3');
+if (tooLate !== null) throw new Error('A sweep from before retry expiry must be rejected');
 
 // Historical/backfilled alerts must not reserve live setups in any session.
 for (const [sessionId, sessionName, shortName] of [
@@ -73,7 +83,7 @@ if (wrongDirection !== null) throw new Error('A bearish CISD must not qualify fr
 
 // A genuinely fresh sweep (new source-level ID) can start a new setup after expiry.
 const freshSweep: KillzoneSweepEvent = {
-  ...sweep, id: 'sw2', levelId: 'london-high-2', sweptAt: now + 65 * 60_000,
+  ...sweep, id: 'sw2', levelId: sweep.levelId, sweptAt: now + 65 * 60_000,
   createdAt: now + 60 * 60_000, sweptBarIndex: 20, sweepPrice: 1.0970,
 };
 (engine as any).kzEngine.getSweepEvents = () => [sweep, freshSweep];
@@ -82,4 +92,17 @@ const freshSetup = (engine as any).evaluateConfluence(
 );
 if (!freshSetup) throw new Error('A fresh sweep must start a new setup after the old retry window expires');
 
-console.log('PASS  wick-based stop loss, invalidation, reminder stop, 60-minute retry and expiry');
+// D1 + H4 trend alignment classifies probability without suppressing counter-trend signals.
+const probabilityEngine = new TradingConfluenceEngine(cfg);
+const probability = (probabilityEngine as any).computeProbabilityAt(now, 'BEARISH');
+if (probability.probability !== 'HIGH') throw new Error('D1 and H4 aligned with signal must be HIGH');
+const mixedEngine = new TradingConfluenceEngine({ ...cfg, dailyBiasMode: 'BEARISH', h4BiasMode: 'BULLISH' });
+if ((mixedEngine as any).computeProbabilityAt(now, 'BEARISH').probability !== 'MEDIUM') {
+  throw new Error('One aligned HTF trend must be MEDIUM');
+}
+const counterEngine = new TradingConfluenceEngine({ ...cfg, dailyBiasMode: 'BULLISH', h4BiasMode: 'BULLISH' });
+if ((counterEngine as any).computeProbabilityAt(now, 'BEARISH').probability !== 'COUNTER_TREND') {
+  throw new Error('Both HTF trends against signal must be COUNTER_TREND');
+}
+
+console.log('PASS  repeated fresh sweeps, direction lock after SL, retry expiry, all sessions and D1/H4 probability');

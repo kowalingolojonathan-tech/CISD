@@ -716,9 +716,38 @@ export class TradingConfluenceEngine {
     // Asia/London/NY AM/NY PM range. The sweep itself may happen outside a Killzone.
     // Accept a matching CISD later on the same NY day as the sweep, whether it occurs
     // before or after the price retests/re-enters the swept level. Source level age: 0-2 days.
+    const direction = isBearish ? 'BEARISH' : 'BULLISH';
+    // Historical/backfilled alerts do not participate in live setup sequencing.
+    // A live CISD consumes the sweeps that preceded it: another CISD cannot reuse
+    // those old sweeps to manufacture an opposite or duplicate reversal signal.
+    const latestLiveAlert = this.confluenceAlerts
+      .filter((a) => a.ackStatus !== 'historical' && a.timeframe === timeframe)
+      .sort((a, b) => b.timestamp - a.timestamp)[0] ?? null;
+
+    // After a stop is hit, keep watching the original reversal direction for
+    // 60 minutes. During that window, only a NEW matching-side sweep can restart
+    // the setup. An opposite CISD is ignored even if older opposite-side sweeps exist.
+    const activeRetry = this.confluenceAlerts
+      .filter((a) => a.ackStatus === 'invalidated' && a.timeframe === timeframe && a.invalidatedAt != null &&
+        a.retryUntil != null && bar.time > a.invalidatedAt && bar.time <= a.retryUntil)
+      .sort((a, b) => (b.invalidatedAt ?? 0) - (a.invalidatedAt ?? 0))[0] ?? null;
+
+    if (activeRetry && activeRetry.direction !== direction) return null;
+
+    // Sweeps before the most recent live CISD are consumed. A retry requires a
+    // sweep after the SL timestamp; after the 60-minute window, a fresh sweep
+    // after expiry is mandatory before either direction can signal again.
+    let sweepCutoff = latestLiveAlert?.timestamp ?? Number.NEGATIVE_INFINITY;
+    if (activeRetry?.invalidatedAt != null) {
+      sweepCutoff = Math.max(sweepCutoff, activeRetry.invalidatedAt);
+    } else if (latestLiveAlert?.ackStatus === 'invalidated' && latestLiveAlert.retryUntil != null &&
+               bar.time > latestLiveAlert.retryUntil) {
+      sweepCutoff = Math.max(sweepCutoff, latestLiveAlert.retryUntil);
+    }
+
     const candidates = allSweeps
       .filter((sw) => sw.isHigh === isBearish)
-      .filter((sw) => sw.sweptAt <= bar.time)
+      .filter((sw) => sw.sweptAt > sweepCutoff && sw.sweptAt <= bar.time)
       .filter((sw) => getNyDateTime(sw.sweptAt, this.config.tzMode).dayKey === ny.dayKey)
       .filter((sw) => {
         const ageDays = nyCalendarDayDistance(sw.createdAt, bar.time, this.config.tzMode);
@@ -728,22 +757,9 @@ export class TradingConfluenceEngine {
     if (candidates.length === 0) return null;
 
     const latestSweep = candidates[candidates.length - 1];
-    const direction = isBearish ? 'BEARISH' : 'BULLISH';
-    const sweepSignature = `${timeframe}_${candidates.map((x) => x.levelId).sort().join('+')}_${direction}`;
-    // Historical alerts are chart/backfill records only. They must never reserve a
-    // live setup or prevent a fresh real-time CISD from being dispatched.
-    // Only a previous live alert for the exact same swept-level set can block it;
-    // an invalidated live alert may be retried during its 60-minute retry window.
-    const previousForSetup = this.confluenceAlerts.find((a) =>
-      a.ackStatus !== 'historical' &&
-      a.timeframe === timeframe && a.direction === direction &&
-      (a.kzSweeps ?? [a.kzSweep]).map((x) => x.levelId).sort().join('+') === candidates.map((x) => x.levelId).sort().join('+')
-    );
-    if (previousForSetup) {
-      if (previousForSetup.ackStatus !== 'invalidated' || previousForSetup.retryUntil == null ||
-          previousForSetup.invalidatedAt == null || bar.time <= previousForSetup.invalidatedAt ||
-          bar.time > previousForSetup.retryUntil) return null;
-    }
+    // Include sweep event IDs, not only source level IDs: the same level may be
+    // swept again later and must represent a distinct opportunity.
+    const sweepSignature = `${timeframe}_${candidates.map((x) => x.id).sort().join('+')}_${direction}`;
     const dedupeKey = `${sweepSignature}_${cisd.time}`;
     if (this.consumedSweepKeys.has(dedupeKey)) return null;
     this.consumedSweepKeys.add(dedupeKey);
