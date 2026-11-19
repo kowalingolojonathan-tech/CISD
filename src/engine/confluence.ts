@@ -730,7 +730,12 @@ export class TradingConfluenceEngine {
     const latestSweep = candidates[candidates.length - 1];
     const direction = isBearish ? 'BEARISH' : 'BULLISH';
     const sweepSignature = `${timeframe}_${candidates.map((x) => x.levelId).sort().join('+')}_${direction}`;
+    // Historical alerts are chart/backfill records only. They must never reserve a
+    // live setup or prevent a fresh real-time CISD from being dispatched.
+    // Only a previous live alert for the exact same swept-level set can block it;
+    // an invalidated live alert may be retried during its 60-minute retry window.
     const previousForSetup = this.confluenceAlerts.find((a) =>
+      a.ackStatus !== 'historical' &&
       a.timeframe === timeframe && a.direction === direction &&
       (a.kzSweeps ?? [a.kzSweep]).map((x) => x.levelId).sort().join('+') === candidates.map((x) => x.levelId).sort().join('+')
     );

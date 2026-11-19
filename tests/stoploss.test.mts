@@ -35,4 +35,51 @@ const retry = (engine as any).evaluateConfluence(bar(now + 6 * 60_000, 1.0950), 
 if (!retry) throw new Error('A replacement CISD within the 60-minute window must be accepted');
 const tooLate = (engine as any).evaluateConfluence(bar(now + 64 * 60_000, 1.0950), 13, cisd(now + 64 * 60_000), sweep, null, false, 'M3');
 if (tooLate !== null) throw new Error('The old sweep must be rejected after the 60-minute retry window');
+
+// Historical/backfilled alerts must not reserve live setups in any session.
+for (const [sessionId, sessionName, shortName] of [
+  ['asia', 'Asia', 'A'], ['london', 'London', 'L'],
+  ['nyam', 'NY AM', 'NA'], ['nypm', 'NY PM', 'NP'],
+] as const) {
+  const sessionSweep: KillzoneSweepEvent = {
+    ...sweep, id: `sw-${sessionId}`, levelId: `${sessionId}-high`,
+    sessionId, sessionName, shortName,
+  };
+  const historicalEngine = new TradingConfluenceEngine(cfg);
+  (historicalEngine as any).kzEngine.getSweepEvents = () => [sessionSweep];
+  const historical = (historicalEngine as any).evaluateConfluence(
+    bar(now, 1.0961), 10, cisd(now), sessionSweep, null, false, 'M3'
+  );
+  if (!historical) throw new Error(`Historical fixture must be created for ${sessionName}`);
+  historical.ackStatus = 'historical';
+  (historicalEngine as any).confluenceAlerts.unshift(historical);
+  const liveAfterHistory = (historicalEngine as any).evaluateConfluence(
+    bar(now + 3 * 60_000, 1.0950), 11, cisd(now + 3 * 60_000), sessionSweep, null, true, 'M3'
+  );
+  if (!liveAfterHistory) throw new Error(`Historical ${sessionName} alert blocked a fresh live CISD`);
+}
+
+// A bearish CISD cannot use a swept low; direction must match the liquidity side.
+const oppositeEngine = new TradingConfluenceEngine(cfg);
+const sweptLow: KillzoneSweepEvent = {
+  ...sweep, id: 'sw-low', levelId: 'london-low-1', isHigh: false,
+  level: 1.0900, sweepPrice: 1.0890,
+};
+(oppositeEngine as any).kzEngine.getSweepEvents = () => [sweptLow];
+const wrongDirection = (oppositeEngine as any).evaluateConfluence(
+  bar(now + 3 * 60_000, 1.0950), 11, cisd(now + 3 * 60_000), sweptLow, null, true, 'M3'
+);
+if (wrongDirection !== null) throw new Error('A bearish CISD must not qualify from a swept low');
+
+// A genuinely fresh sweep (new source-level ID) can start a new setup after expiry.
+const freshSweep: KillzoneSweepEvent = {
+  ...sweep, id: 'sw2', levelId: 'london-high-2', sweptAt: now + 65 * 60_000,
+  createdAt: now + 60 * 60_000, sweptBarIndex: 20, sweepPrice: 1.0970,
+};
+(engine as any).kzEngine.getSweepEvents = () => [sweep, freshSweep];
+const freshSetup = (engine as any).evaluateConfluence(
+  bar(now + 66 * 60_000, 1.0971), 21, cisd(now + 66 * 60_000), freshSweep, null, true, 'M3'
+);
+if (!freshSetup) throw new Error('A fresh sweep must start a new setup after the old retry window expires');
+
 console.log('PASS  wick-based stop loss, invalidation, reminder stop, 60-minute retry and expiry');
