@@ -157,7 +157,13 @@ export interface ConfluenceAlert {
   kzSweeps?: KillzoneSweepEvent[];
   barsBetweenSweepAndChoch: number;
   closedInsideLevel: boolean;
-  isPreReentry: boolean; // true = price has NOT yet re-entered inside the broken KZ level
+  isPreReentry: boolean; // true = no close back inside the swept level before CHoCH
+  /** Exact NY-local event timestamps captured when the setup is created. */
+  sweepTimeStr?: string;
+  chochTimeStr?: string;
+  reentryTimeStr?: string | null;
+  reentryAt?: number | null;
+  reentryPrice?: number | null;
   isIntrabarSignal: boolean; // true = fired live before timeframe candle close
   hasInternalSwingSweep: boolean;
   webhookStatus: 'pending' | 'sent' | 'skipped' | 'failed';

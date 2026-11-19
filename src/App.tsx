@@ -523,6 +523,11 @@ export default function App() {
                   >
                     {acknowledgingId === a.id ? 'Validation...' : "Valider (J'ai vu)"}
                   </button>
+                  <div className="basis-full grid grid-cols-1 md:grid-cols-3 gap-2 rounded border border-[#334155] bg-[#0B0F17] p-2 text-[11px] text-[#CBD5E1]">
+                    <div><b className="text-[#FBBF24]">Cassure :</b> {(a.kzSweeps?.length ? a.kzSweeps : [a.kzSweep]).map((sw) => `${sw.sessionName} ${sw.isHigh ? 'HIGH' : 'LOW'} niveau ${formatSymbolPrice(sw.level, a.symbol)} → prix ${formatSymbolPrice(sw.sweepPrice, a.symbol)}`).join(' · ')}<br/><span className="font-mono">{a.sweepTimeStr ?? a.nyTimeStr}</span></div>
+                    <div><b className="text-[#38BDF8]">CHoCH {a.timeframe ?? 'M3'} :</b> {a.isPreReentry ? 'à l’extérieur avant réintégration' : 'après réintégration'}<br/><span className="font-mono">{a.chochTimeStr ?? a.nyTimeStr} · {formatSymbolPrice(a.choch.closePrice, a.symbol)}</span>{a.reentryAt != null ? <><br/>Réintégration : <span className="font-mono">{a.reentryTimeStr} · {a.reentryPrice != null ? formatSymbolPrice(a.reentryPrice, a.symbol) : '—'}</span></> : null}</div>
+                    <div><b className="text-[#A78BFA]">Tendances au signal :</b> Daily {a.dailyBias} · H4 {a.h4Bias}<br/>SL : <span className="font-mono">{formatSymbolPrice(a.stopLoss ?? a.kzSweep.sweepPrice, a.symbol)}</span></div>
+                  </div>
                 </div>
               ))}
             </div>

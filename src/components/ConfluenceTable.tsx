@@ -175,8 +175,8 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
                 {filteredAlerts.map((a) => {
                   const isBull = a.direction === 'BULLISH';
                   return (
+                    <React.Fragment key={a.id}>
                     <tr
-                      key={a.id}
                       className={
                         a.ackStatus === 'pending'
                           ? 'bg-[#F59E0B]/5 hover:bg-[#F59E0B]/10 transition-colors'
@@ -276,6 +276,46 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
                         </span>
                       </td>
                     </tr>
+                    <tr key={`${a.id}-trace`} className="bg-[#0B0F17]/70">
+                      <td colSpan={9} className="px-4 pb-3 pt-1">
+                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2 text-[11px]">
+                          <div className="rounded border border-[#334155] p-2">
+                            <div className="font-semibold text-[#FBBF24] mb-1">1 · Cassure de liquidité</div>
+                            {(a.kzSweeps?.length ? a.kzSweeps : [a.kzSweep]).map((sw) => (
+                              <div key={sw.id} className="text-[#CBD5E1] mb-1">
+                                <span className="font-semibold">{sw.sessionName} {sw.isHigh ? 'HIGH (BSL)' : 'LOW (SSL)'}</span>
+                                <div>Niveau cassé : <span className="font-mono">{formatSymbolPrice(sw.level, a.symbol)}</span></div>
+                                <div>Prix de cassure : <span className="font-mono">{formatSymbolPrice(sw.sweepPrice, a.symbol)}</span></div>
+                                <div>Heure : <span className="font-mono">{a.sweepTimeStr ?? formatNyTime(sw.sweptAt)}</span></div>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="rounded border border-[#334155] p-2">
+                            <div className="font-semibold text-[#38BDF8] mb-1">2 · CHoCH {a.timeframe ?? 'M3'}</div>
+                            <div>Heure : <span className="font-mono text-[#F1F5F9]">{a.chochTimeStr ?? a.nyTimeStr}</span></div>
+                            <div>Prix du CHoCH : <span className="font-mono text-[#F1F5F9]">{formatSymbolPrice(a.choch.closePrice, a.symbol)}</span></div>
+                            <div>Niveau de structure : <span className="font-mono">{formatSymbolPrice(a.choch.originLevel, a.symbol)}</span></div>
+                            <div className={a.isPreReentry ? 'text-[#F59E0B] font-semibold mt-1' : 'text-[#10B981] font-semibold mt-1'}>
+                              {a.isPreReentry ? 'CHoCH à l’extérieur, avant réintégration' : 'CHoCH après réintégration'}
+                            </div>
+                          </div>
+                          <div className="rounded border border-[#334155] p-2">
+                            <div className="font-semibold text-[#A78BFA] mb-1">3 · Réintégration et tendances</div>
+                            {a.reentryAt != null ? (
+                              <>
+                                <div>Réintégration : <span className="font-mono text-[#F1F5F9]">{a.reentryTimeStr ?? formatNyTime(a.reentryAt)}</span></div>
+                                <div>Prix de clôture : <span className="font-mono">{a.reentryPrice != null ? formatSymbolPrice(a.reentryPrice, a.symbol) : '—'}</span></div>
+                              </>
+                            ) : <div className="text-[#F59E0B]">Aucune réintégration observée avant le CHoCH</div>}
+                            <div className="mt-1">Daily : <span className="font-semibold text-[#F1F5F9]">{a.dailyBias}</span></div>
+                            <div>H4 : <span className="font-semibold text-[#F1F5F9]">{a.h4Bias}</span></div>
+                            <div>Classement : <span className="font-semibold text-[#F1F5F9]">{a.probability === 'HIGH' ? 'HAUTE' : a.probability === 'MEDIUM' ? 'MOYENNE' : 'CONTRE-TENDANCE'}</span></div>
+                            <div>SL : <span className="font-mono">{formatSymbolPrice(a.stopLoss ?? a.kzSweep.sweepPrice, a.symbol)}</span></div>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                    </React.Fragment>
                   );
                 })}
               </tbody>

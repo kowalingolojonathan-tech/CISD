@@ -53,7 +53,7 @@ await push.sendPushTest();
 ok(oauthCalls === 1, 'access token cached between sends');
 
 // alert message formatting
-const alert: any = { dedupeKey: 'lvl_12_BEARISH', id: 'conf_1', symbol: 'XAU/USD', timeframe: 'M2', direction: 'BEARISH', probability: 'HIGH',
+const alert: any = { dedupeKey: 'lvl_12_BEARISH', id: 'conf_1', symbol: 'XAU/USD', timeframe: 'M2', direction: 'BEARISH', probability: 'HIGH', nyTimeStr: '2026-11-19 09:45:00 EST', sweepTimeStr: '2026-11-19 09:30:00 EST', chochTimeStr: '2026-11-19 09:45:00 EST', isPreReentry: true, dailyBias: 'BEARISH', h4Bias: 'BULLISH',
   activeKillzoneName: 'NY AM', stopLoss: 4015.2, kzSweep: { id: 'sw1', shortName: 'L', isHigh: true, sessionName: 'London', level: 4012.5 },
   kzSweeps: [
     { id: 'sw1', shortName: 'L', isHigh: true, sessionName: 'London', level: 4012.5 },
@@ -61,10 +61,12 @@ const alert: any = { dedupeKey: 'lvl_12_BEARISH', id: 'conf_1', symbol: 'XAU/USD
   ], choch: { closePrice: 4010.2 } };
 const pm = push.buildAlertPushMessage(alert, 3);
 ok(pm.title.includes('Rappel #3') && pm.title.includes('BAISSIER') && pm.title.includes('HAUTE PROBA') && pm.title.includes('M2'), 'title includes timeframe: ' + pm.title);
-ok(pm.body.includes('L.H + N.H'), 'notification body lists both swept session levels: ' + pm.body);
-ok(pm.body.includes('SL 4015.20'), 'notification body includes the calculated stop loss: ' + pm.body);
+ok(pm.body.includes('London HIGH') && pm.body.includes('NY AM HIGH'), 'notification body lists both swept session levels: ' + pm.body);
+ok(pm.body.includes('SL: 4015.20'), 'notification body includes the calculated stop loss: ' + pm.body);
+ok(pm.body.includes('CHoCH AVANT réintégration') && pm.body.includes('Daily: BEARISH') && pm.body.includes('H4: BULLISH'), 'notification includes CHoCH phase and captured HTF biases');
+ok(pm.body.includes('2026-11-19 09:30:00 EST') && pm.body.includes('2026-11-19 09:45:00 EST'), 'notification includes exact sweep and CHoCH timestamps');
 ok(pm.tag === 'lvl_12_BEARISH', 'stable tag so reminders replace each other');
 const legacyAlert: any = { ...alert, stopLoss: undefined, choch: { ...alert.choch, closePrice: undefined }, kzSweep: { ...alert.kzSweep, sweepPrice: undefined, level: undefined } };
 const legacyPm = push.buildAlertPushMessage(legacyAlert, 1);
-ok(legacyPm.body.includes('prix —') && legacyPm.body.includes('SL —'), 'missing legacy prices do not crash notification formatting');
+ok(legacyPm.body.includes('CHoCH M2') && legacyPm.body.includes('SL: —'), 'missing legacy prices do not crash notification formatting');
 console.log(checks.join('\n'));

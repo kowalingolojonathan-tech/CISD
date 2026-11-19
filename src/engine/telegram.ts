@@ -19,45 +19,34 @@ function biasFr(b: 'BULLISH' | 'BEARISH' | 'NEUTRAL'): string {
 }
 
 export function formatTelegramMessage(alert: ConfluenceAlert, reminderNumber = 1): string {
-  const fmt = (p: number) => formatSymbolPrice(p, alert.symbol);
+  const fmt = (p: number | null | undefined) =>
+    typeof p === 'number' && Number.isFinite(p) ? formatSymbolPrice(p, alert.symbol) : '—';
   const dirLabel = alert.direction === 'BULLISH' ? 'RETOURNEMENT HAUSSIER' : 'RETOURNEMENT BAISSIER';
   const arrow = alert.direction === 'BULLISH' ? '▲' : '▼';
   const sweeps = alert.kzSweeps?.length ? alert.kzSweeps : [alert.kzSweep];
-  const sweepLines = sweeps.map((sw) => `• ${sw.sessionName} (${sw.shortName}.${sw.isHigh ? 'H' : 'L'}) @ <code>${fmt(sw.level)}</code>`);
   const timeframe = alert.timeframe ?? 'M3';
-  const phaseLabel = alert.isPreReentry
-    ? 'AVANT REINTEGRATION (Prix encore hors niveau)'
-    : 'REINTEGRATION CONFIRMEE';
-  const timingLabel = alert.isIntrabarSignal ? `Temps reel (Intrabar ${timeframe})` : `Cloture ${timeframe} confirmee`;
-  const sessionLabel = alert.activeKillzoneName ?? 'Hors Killzone';
-  const probHeader =
-    alert.probability === 'HIGH'
-      ? `<b>★ PROBABILITE ELEVEE (Alignement Daily + H4) ★</b>\n`
-      : alert.probability === 'MEDIUM'
-      ? `<b>Probabilite Moyenne (1/2 HTF aligne)</b>\n`
-      : `<b>Contre-Tendance HTF</b>\n`;
-  const reminderBanner =
-    reminderNumber > 1
-      ? `<b>🔔 RAPPEL #${reminderNumber} — SIGNAL EN COURS NON VALIDE</b>\n<i>Cliquez sur "✅ J'ai vu" ci-dessous ou validez dans l'app pour marquer le signal comme vu.</i>\n\n`
-      : `<b>🔴 SIGNAL EN COURS — VALIDATION REQUISE</b>\n`;
-  const swingLine = alert.hasInternalSwingSweep
-    ? `\n• <b>Swing Sweep AlgoAlpha :</b> Confirme (${
-        alert.choch.wickedSwingLevel !== null ? fmt(alert.choch.wickedSwingLevel) : '-'
-      })`
-    : '';
-
+  const probLabel = alert.probability === 'HIGH' ? 'HAUTE' : alert.probability === 'MEDIUM' ? 'MOYENNE' : 'CONTRE-TENDANCE';
+  const reminderBanner = reminderNumber > 1
+    ? `<b>🔔 RAPPEL #${reminderNumber} — SIGNAL EN COURS NON VALIDÉ</b>\n<i>Cliquez sur « J'ai vu » pour arrêter les rappels.</i>\n\n`
+    : `<b>🔴 SIGNAL EN COURS — VALIDATION REQUISE</b>\n`;
+  const sweepLines = sweeps.map((sw) =>
+    `• <b>${sw.sessionName} ${sw.isHigh ? 'HIGH (BSL)' : 'LOW (SSL)'}</b> — niveau: <code>${fmt(sw.level)}</code> · prix cassure: <code>${fmt(sw.sweepPrice)}</code> · ${alert.sweepTimeStr ?? alert.nyTimeStr}`
+  );
+  const reentryLine = alert.reentryAt != null
+    ? `Réintégration: <b>${alert.reentryTimeStr ?? 'heure indisponible'}</b> · clôture <code>${fmt(alert.reentryPrice)}</code>`
+    : `Réintégration: <b>non observée avant le CHoCH</b>`;
+  const phase = alert.isPreReentry ? 'CHoCH À L’EXTÉRIEUR — AVANT RÉINTÉGRATION' : 'CHoCH APRÈS RÉINTÉGRATION';
   return [
-    `${reminderBanner}${probHeader}<b>${arrow} SIGNAL CONFLUENCE — ${alert.symbol} ${timeframe}</b>`,
-    `<b>Direction :</b> ${dirLabel}`,
-    `<b>Biais HTF :</b> Daily <code>${biasFr(alert.dailyBias)}</code> · H4 <code>${biasFr(alert.h4Bias)}</code>`,
-    `<b>Killzone Active :</b> ${sessionLabel}`,
-    `<b>Niveaux balayes (${sweeps.length}) :</b>\n${sweepLines.join('\n')}`, 
-    `<b>Prix Actuel / Sweep :</b> <code>${fmt(alert.choch.closePrice)}</code> (Meche: <code>${fmt(alert.kzSweep.sweepPrice)}</code>)`,
-    `<b>Stop Loss (extreme du sweep) :</b> <code>${fmt(alert.stopLoss ?? alert.kzSweep.sweepPrice)}</code>`,
-    `<b>Position Prix :</b> ${phaseLabel}`,
-    `<b>CHoCH ${timeframe} :</b> Origine <code>${fmt(alert.choch.originLevel)}</code> · Fractale LuxAlgo · confirmation par changement de structure`,
-    `<b>Declenchement :</b> ${timingLabel} · Delai ${alert.barsBetweenSweepAndChoch} bougie(s) ${timeframe}${swingLine}`,
-    `<b>Heure NY :</b> <code>${alert.nyTimeStr}</code>`,
+    `${reminderBanner}<b>${arrow} SIGNAL — ${alert.symbol} ${timeframe} · ${dirLabel}</b>`,
+    `<b>Probabilité:</b> ${probLabel}`,
+    `<b>Date/heure du signal (NY):</b> <code>${alert.nyTimeStr}</code>`,
+    `<b>1. Cassure / liquidité prise:</b>\n${sweepLines.join('\n')}`,
+    `<b>2. CHoCH ${timeframe}:</b> <code>${alert.chochTimeStr ?? alert.nyTimeStr}</code> · prix clôture <code>${fmt(alert.choch?.closePrice)}</code> · structure <code>${fmt(alert.choch?.originLevel)}</code>`,
+    `<b>3. Position du CHoCH:</b> ${phase}`,
+    `<b>4. Réintégration:</b> ${reentryLine}`,
+    `<b>5. Tendances au signal:</b> Daily <code>${biasFr(alert.dailyBias)}</code> · H4 <code>${biasFr(alert.h4Bias)}</code>`,
+    `<b>Stop Loss:</b> <code>${fmt(alert.stopLoss ?? alert.kzSweep?.sweepPrice)}</code>`,
+    `<b>Session active:</b> ${alert.activeKillzoneName ?? 'Hors Killzone'} · <b>Déclenchement:</b> ${alert.isIntrabarSignal ? 'Intrabar' : 'Clôture confirmée'}`,
   ].join('\n');
 }
 

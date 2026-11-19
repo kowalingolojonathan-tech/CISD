@@ -757,6 +757,18 @@ export class TradingConfluenceEngine {
     const closedInsideLevel = responsibleSweeps.every((sw) =>
       isBearish ? bar.close < sw.level : bar.close > sw.level
     );
+    // Record the first real candle close that re-enters all responsible swept levels.
+    // This is descriptive metadata only; it does not participate in signal eligibility.
+    const timeframeBars = timeframe === 'M2' ? this.confirmedM2Bars : this.confirmedBars;
+    const timeline = [...timeframeBars, bar]
+      .filter((c, i, arr) => c.time >= latestSweep.sweptAt && c.time <= bar.time && arr.findIndex((x) => x.time === c.time) === i)
+      .sort((a, b) => a.time - b.time);
+    const reentryBar = timeline.find((c) => responsibleSweeps.every((sw) =>
+      isBearish ? c.close < sw.level : c.close > sw.level
+    )) ?? null;
+    const sweepNy = getNyDateTime(latestSweep.sweptAt, this.config.tzMode);
+    const chochNy = getNyDateTime(choch.time, this.config.tzMode);
+    const reentryNy = reentryBar ? getNyDateTime(reentryBar.time, this.config.tzMode) : null;
     const { dailyBias, h4Bias, probability } = this.computeProbabilityAt(bar.time, direction);
     return {
       id: `conf_${timeframe}_${bar.time}_${barIndex}_${isIntrabarSignal ? 'live' : 'cls'}`,
@@ -775,7 +787,12 @@ export class TradingConfluenceEngine {
       timeframe,
       barsBetweenSweepAndChoch: Math.max(0, Math.floor((bar.time - latestSweep.sweptAt) / intervalMs)),
       closedInsideLevel,
-      isPreReentry: !closedInsideLevel,
+      isPreReentry: !reentryBar,
+      sweepTimeStr: sweepNy.formatted,
+      chochTimeStr: chochNy.formatted,
+      reentryTimeStr: reentryNy?.formatted ?? null,
+      reentryAt: reentryBar?.time ?? null,
+      reentryPrice: reentryBar?.close ?? null,
       isIntrabarSignal,
       hasInternalSwingSweep: choch.strongSweep,
       webhookStatus: 'skipped',
@@ -850,6 +867,11 @@ export class TradingConfluenceEngine {
           barsBetweenSweepAndChoch: 0,
           closedInsideLevel: false,
           isPreReentry: true,
+          sweepTimeStr: ny.formatted,
+          chochTimeStr: ny.formatted,
+          reentryTimeStr: null,
+          reentryAt: null,
+          reentryPrice: null,
           isIntrabarSignal: true,
           hasInternalSwingSweep: true,
           webhookStatus: 'pending',
