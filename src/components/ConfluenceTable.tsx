@@ -234,6 +234,8 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
                           </span>
                         ) : a.ackStatus === 'expired' ? (
                           <span className="text-[#64748B]">Expire</span>
+                        ) : a.ackStatus === 'invalidated' ? (
+                          <span className="text-[#EF4444] font-medium">Invalide · SL touche · surveillance 60 min</span>
                         ) : (
                           <span className="text-[#64748B]">Passe (ignore)</span>
                         )}

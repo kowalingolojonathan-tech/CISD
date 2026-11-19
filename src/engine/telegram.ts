@@ -53,6 +53,7 @@ export function formatTelegramMessage(alert: ConfluenceAlert, reminderNumber = 1
     `<b>Killzone Active :</b> ${sessionLabel}`,
     `<b>Niveaux balayes (${sweeps.length}) :</b>\n${sweepLines.join('\n')}`, 
     `<b>Prix Actuel / Sweep :</b> <code>${fmt(alert.cisd.closePrice)}</code> (Meche: <code>${fmt(alert.kzSweep.sweepPrice)}</code>)`,
+    `<b>Stop Loss (extreme du sweep) :</b> <code>${fmt(alert.stopLoss ?? alert.kzSweep.sweepPrice)}</code>`,
     `<b>Position Prix :</b> ${phaseLabel}`,
     `<b>CISD ${timeframe} :</b> Origine <code>${fmt(alert.cisd.originLevel)}</code> · Ratio <code>${alert.cisd.noiseRatio.toFixed(2)}</code> (&gt; ${alert.cisd.toleranceUsed})`,
     `<b>Declenchement :</b> ${timingLabel} · Delai ${alert.barsBetweenSweepAndCisd} bougie(s) ${timeframe}${swingLine}`,

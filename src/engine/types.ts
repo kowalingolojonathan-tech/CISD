@@ -132,7 +132,7 @@ export interface HtfBiasState {
   alignedDirection: HtfBiasDirection | null; // non-null when D1 == H4 != NEUTRAL
 }
 
-export type AlertAckStatus = 'pending' | 'acknowledged' | 'expired' | 'historical';
+export type AlertAckStatus = 'pending' | 'acknowledged' | 'expired' | 'invalidated' | 'historical';
 
 export interface ConfluenceAlert {
   id: string;
@@ -164,6 +164,12 @@ export interface ConfluenceAlert {
   reminderCount: number;
   lastReminderAt: number | null;
   nextReminderAt: number | null;
+  /** Stop-loss at the extreme wick of the swept session level(s). */
+  stopLoss?: number;
+  /** Timestamp when the setup was invalidated by a post-CISD stop-loss touch. */
+  invalidatedAt?: number | null;
+  /** End of the 60-minute replacement-CISD observation window. */
+  retryUntil?: number | null;
 }
 
 export type MarketSourceType = 'yahoo_swissquote' | 'twelvedata';

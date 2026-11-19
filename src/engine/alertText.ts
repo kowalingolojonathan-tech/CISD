@@ -23,7 +23,7 @@ export function buildAlertNotification(alert: ConfluenceAlert, reminderNumber = 
     title: `${prefix}${arrow} ${alert.symbol} ${timeframe} \u00B7 ${dir}${star}`,
     body:
       `${alert.activeKillzoneName ?? 'Hors killzone'} \u00B7 balayages ${level} ` +
-      `\u00B7 prix ${fmt(alert.cisd.closePrice)}`,
+      `\u00B7 prix ${fmt(alert.cisd.closePrice)} \u00B7 SL ${fmt(alert.stopLoss ?? alert.kzSweep.sweepPrice)}`,
     tag: alert.dedupeKey.replace(/[^a-zA-Z0-9_-]/g, '_'),
   };
 }

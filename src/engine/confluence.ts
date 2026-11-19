@@ -27,6 +27,8 @@ interface PersistedAckState {
   nextReminderAt: number | null;
   webhookStatus: 'pending' | 'sent' | 'skipped' | 'failed';
   webhookDetail?: string;
+  invalidatedAt?: number | null;
+  retryUntil?: number | null;
 }
 
 function maskSecret(val: string): string {
@@ -264,6 +266,8 @@ export class TradingConfluenceEngine {
       nextReminderAt: alert.nextReminderAt,
       webhookStatus: alert.webhookStatus,
       webhookDetail: alert.webhookDetail,
+      invalidatedAt: alert.invalidatedAt ?? null,
+      retryUntil: alert.retryUntil ?? null,
     });
   }
 
@@ -465,6 +469,7 @@ export class TradingConfluenceEngine {
     if (last && bar.time < last.time) return;
     if (last && bar.time === last.time) return;
     if (isConfirmedClose) {
+      this.invalidateStoppedSetups(bar);
       if (this.liveM5Bar?.time === bar.time) this.liveM5Bar = null;
       this.confirmedM5Bars.push({ ...bar, confirmed: true });
       const signal = this.cisdM5Engine.processConfirmedBar(bar);
@@ -489,6 +494,7 @@ export class TradingConfluenceEngine {
         }
       }
       this.liveM5Bar = bar;
+      this.invalidateStoppedSetups(bar);
       if (this.config.triggerOnIntrabar) {
         const signal = this.cisdM5Engine.previewLiveBar(bar);
         if (signal) {
@@ -535,6 +541,7 @@ export class TradingConfluenceEngine {
 
   private async processConfirmedBarInternal(bar: Candle, dispatchLiveWebhook: boolean) {
     const barIndex = this.confirmedBars.length;
+    this.invalidateStoppedSetups(bar);
     this.confirmedBars.push({ ...bar, confirmed: true });
 
     const newSweeps = this.kzEngine.processBar(bar, barIndex);
@@ -564,6 +571,7 @@ export class TradingConfluenceEngine {
   }
 
   private async evaluateLiveIntrabar(liveBar: Candle) {
+    this.invalidateStoppedSetups(liveBar);
     const liveBarIndex = this.confirmedBars.length;
     const liveSweeps = this.kzEngine.previewLiveSweeps(liveBar, liveBarIndex);
 
@@ -597,6 +605,25 @@ export class TradingConfluenceEngine {
     }
   }
 
+  /** A setup is invalidated only by a later candle touching its wick-based SL. */
+  private invalidateStoppedSetups(bar: Candle) {
+    let changed = false;
+    for (const alert of this.confluenceAlerts) {
+      if (alert.ackStatus === 'historical' || alert.ackStatus === 'invalidated' ||
+          alert.invalidatedAt != null || bar.time <= alert.timestamp) continue;
+      const touched = alert.direction === 'BEARISH' ? bar.high >= alert.stopLoss : bar.low <= alert.stopLoss;
+      if (!touched) continue;
+      alert.ackStatus = 'invalidated';
+      alert.nextReminderAt = null;
+      alert.invalidatedAt = bar.time;
+      alert.retryUntil = bar.time + 60 * 60_000;
+      alert.webhookDetail = `Setup invalide: Stop Loss touche. Surveillance d'un nouveau CISD jusqu'a ${new Date(alert.retryUntil).toISOString()}`;
+      this.saveAckState(alert);
+      changed = true;
+    }
+    if (changed) this.emit();
+  }
+
   private async recordAndDispatchAlert(confluence: ConfluenceAlert, dispatchLiveWebhook: boolean) {
     const saved = this.persistedAlertStates.get(confluence.dedupeKey);
     if (saved) {
@@ -608,6 +635,8 @@ export class TradingConfluenceEngine {
       confluence.nextReminderAt = saved.nextReminderAt;
       confluence.webhookStatus = saved.webhookStatus;
       confluence.webhookDetail = saved.webhookDetail;
+      confluence.invalidatedAt = saved.invalidatedAt ?? null;
+      confluence.retryUntil = saved.retryUntil ?? null;
     }
 
     if (this.confluenceAlerts.some((a) => a.dedupeKey === confluence.dedupeKey)) return;
@@ -700,7 +729,17 @@ export class TradingConfluenceEngine {
 
     const latestSweep = candidates[candidates.length - 1];
     const direction = isBearish ? 'BEARISH' : 'BULLISH';
-    const dedupeKey = `${timeframe}_${candidates.map((x) => x.levelId).sort().join('+')}_${direction}`;
+    const sweepSignature = `${timeframe}_${candidates.map((x) => x.levelId).sort().join('+')}_${direction}`;
+    const previousForSetup = this.confluenceAlerts.find((a) =>
+      a.timeframe === timeframe && a.direction === direction &&
+      (a.kzSweeps ?? [a.kzSweep]).map((x) => x.levelId).sort().join('+') === candidates.map((x) => x.levelId).sort().join('+')
+    );
+    if (previousForSetup) {
+      if (previousForSetup.ackStatus !== 'invalidated' || previousForSetup.retryUntil == null ||
+          previousForSetup.invalidatedAt == null || bar.time <= previousForSetup.invalidatedAt ||
+          bar.time > previousForSetup.retryUntil) return null;
+    }
+    const dedupeKey = `${sweepSignature}_${cisd.time}`;
     if (this.consumedSweepKeys.has(dedupeKey)) return null;
     this.consumedSweepKeys.add(dedupeKey);
 
@@ -736,6 +775,9 @@ export class TradingConfluenceEngine {
       reminderCount: 0,
       lastReminderAt: null,
       nextReminderAt: null,
+      stopLoss: isBearish ? Math.max(...candidates.map((sw) => sw.sweepPrice)) : Math.min(...candidates.map((sw) => sw.sweepPrice)),
+      invalidatedAt: null,
+      retryUntil: null,
     };
   }
 
@@ -806,6 +848,9 @@ export class TradingConfluenceEngine {
           reminderCount: 1,
           lastReminderAt: now,
           nextReminderAt: null,
+          stopLoss: htf.alignedDirection === 'BULLISH' ? price - step : price + step,
+          invalidatedAt: null,
+          retryUntil: null,
         };
 
     const res = await dispatchAlertWebhook(sampleAlert, {

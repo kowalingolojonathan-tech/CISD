@@ -5,6 +5,7 @@ import type { ConfluenceAlert } from '../engine/types.ts';
 /** On-device notifications (no Firebase, no server): fired by the local engine. */
 
 let ready: Promise<boolean> | null = null;
+let actionListenerReady = false;
 
 async function setup(): Promise<boolean> {
   const { LocalNotifications } = await import('@capacitor/local-notifications');
@@ -16,6 +17,30 @@ async function setup(): Promise<boolean> {
   if (perm.display !== 'granted') return false;
 
   // High importance: heads-up banner + sound + vibration, also on the lock screen.
+  await LocalNotifications.registerActionTypes({
+    types: [{
+      id: 'CISD_ALERT_ACTIONS',
+      actions: [{ id: 'acknowledge', title: "J'ai vu · arrêter les rappels", foreground: true }],
+    }],
+  });
+  if (!actionListenerReady) {
+    actionListenerReady = true;
+    await LocalNotifications.addListener('localNotificationActionPerformed', async (event) => {
+      if (event.actionId !== 'acknowledge') return;
+      const extra = event.notification.extra as { id?: string; symbol?: string } | undefined;
+      if (!extra?.id || !extra.symbol) return;
+      try {
+        await fetch(`/api/alerts/ack?symbol=${encodeURIComponent(extra.symbol)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: extra.id, symbol: extra.symbol }),
+        });
+      } catch (err) {
+        console.error('[notify] acknowledgement failed', err);
+      }
+    });
+  }
+
   await LocalNotifications.createChannel({
     id: 'signals',
     name: 'Signaux CISD',
@@ -44,10 +69,10 @@ function notificationId(tag: string): number {
   return (Math.abs(h) % 2_000_000_000) + 1;
 }
 
-async function show(id: number, title: string, body: string): Promise<void> {
+async function show(id: number, title: string, body: string, extra?: { id?: string; symbol?: string }): Promise<void> {
   const { LocalNotifications } = await import('@capacitor/local-notifications');
   await LocalNotifications.schedule({
-    notifications: [{ id, title, body, channelId: 'signals' }],
+    notifications: [{ id, title, body, channelId: 'signals', actionTypeId: extra?.id ? 'CISD_ALERT_ACTIONS' : undefined, extra }],
   });
 }
 
@@ -55,7 +80,7 @@ export async function notifyAlertLocal(alert: ConfluenceAlert, reminderNumber: n
   if (!(await initLocalNotifications())) return;
   const n = buildAlertNotification(alert, reminderNumber);
   try {
-    await show(notificationId(n.tag), n.title, n.body);
+    await show(notificationId(n.tag), n.title, `${n.body} · Appuyez sur « J'ai vu » pour arrêter les rappels.`, { id: alert.id, symbol: alert.symbol });
   } catch (err) {
     console.error('[notify] schedule failed', err);
   }

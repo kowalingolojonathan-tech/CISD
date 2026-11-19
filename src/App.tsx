@@ -233,9 +233,13 @@ export default function App() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id, symbol: selectedSymbol }),
         });
-        const data = (await res.json()) as { ok: boolean; snapshot?: EngineSnapshot };
+        const data = (await res.json()) as { ok: boolean; acknowledgedCount?: number; error?: string; snapshot?: EngineSnapshot };
         if (data.snapshot) setSnapshot(data.snapshot);
-        showToast(true, "Alerte marquee comme vue (« J'ai vu »).");
+        if (!res.ok || !data.ok || !data.acknowledgedCount) {
+          showToast(false, data.error || 'Aucune alerte en attente correspondante.');
+          return;
+        }
+        showToast(true, "Rappels arretes : alerte marquee comme vue (« J'ai vu »).");
       } catch (err) {
         showToast(false, err instanceof Error ? err.message : 'Erreur validation');
       } finally {
@@ -253,9 +257,13 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ all: true, symbol: selectedSymbol }),
       });
-      const data = (await res.json()) as { ok: boolean; snapshot?: EngineSnapshot };
+      const data = (await res.json()) as { ok: boolean; acknowledgedCount?: number; error?: string; snapshot?: EngineSnapshot };
       if (data.snapshot) setSnapshot(data.snapshot);
-      showToast(true, 'Toutes les alertes en cours ont ete validees.');
+      if (!res.ok || !data.ok || !data.acknowledgedCount) {
+        showToast(false, data.error || 'Aucune alerte en attente a arreter.');
+        return;
+      }
+      showToast(true, `Rappels arretes : ${data.acknowledgedCount} alerte(s) validee(s).`);
     } catch (err) {
       showToast(false, err instanceof Error ? err.message : 'Erreur validation');
     } finally {
@@ -501,6 +509,7 @@ export default function App() {
                         </span>
                       ))}
                     </span>
+                    <span className="font-mono tabular-nums text-[#FBBF24]">SL : {formatSymbolPrice(a.stopLoss ?? a.kzSweep.sweepPrice, a.symbol)}</span>
                     <span className="font-mono tabular-nums text-[#94A3B8]">
                       Telegram : {a.reminderCount}/10 envois · rappel toutes les {snapshot.config.repeatAlertIntervalSec}s
                     </span>
