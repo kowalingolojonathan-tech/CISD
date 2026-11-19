@@ -1,13 +1,12 @@
-# Killzone CISD Desk
+# Killzone CHoCH Desk
 
-Moteur temps réel Killzones ICT + CISD M3 (XAU/USD, EUR/USD) avec alertes Telegram
-et **notifications push instantanées sur Android (APK)**.
+Moteur temps réel Killzones ICT + CHoCH LuxAlgo M2/M3 (XAU/USD, EUR/USD), historique 3/4 jours, alertes Telegram et **notifications push instantanées sur Android (APK)**.
 
 ```bash
 npm install
 npm run dev      # développement (Vite + serveur)
 npm run build && npm start   # production
-npm test         # tests du moteur (DST, pipeline de signaux, flux de marché, push)
+npm test         # tests du moteur (CHoCH, liquidité inter-session, DST, pipeline, flux de marché, push)
 ```
 
 ## Corrections apportées

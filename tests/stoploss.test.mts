@@ -6,7 +6,7 @@ const cfg: EngineConfig = {
   symbol: 'EUR/USD', marketSource: 'yahoo_swissquote', twelveDataApiKey: '', tzMode: 'Manual UTC-5 (EST)',
   tolerance: 0.7, swingPeriod: 12, expiryBars: 100, liquidityLookback: 10, kzLookbackBars: 10,
   requireActiveKillzone: true, triggerOnIntrabar: true, dailyBiasMode: 'BEARISH', h4BiasMode: 'BEARISH',
-  highProbabilityOnly: false, enableM5Cisd: true, telegramBotToken: '', telegramChatId: '', customWebhookUrl: '',
+  highProbabilityOnly: false, enableM2Choch: true, telegramBotToken: '', telegramChatId: '', customWebhookUrl: '',
   alertsEnabled: true, repeatAlertIntervalSec: 30, liveSetupMaxMinutes: 20,
 };
 const sweep: KillzoneSweepEvent = {

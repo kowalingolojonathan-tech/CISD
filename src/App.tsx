@@ -323,7 +323,7 @@ export default function App() {
             }}
             className="text-base font-bold tracking-tight text-[#F8FAFC] whitespace-nowrap shrink-0"
           >
-            Killzone CISD Desk
+            Killzone CHoCH Desk
           </a>
 
           <nav className="flex items-center gap-4 sm:gap-6">
@@ -532,7 +532,7 @@ export default function App() {
         {loading && !snapshot ? (
           <div className="bg-[#111827] border border-[#1E293B] rounded-lg p-10 text-center">
             <p className="text-sm text-[#94A3B8]">
-              Connexion aux donnees reelles {selectedSymbol} M3/M5 et calcul des sessions Killzones...
+              Connexion aux donnees reelles {selectedSymbol} M2/M3 et calcul des sessions Killzones...
             </p>
           </div>
         ) : error && !snapshot ? (
@@ -547,7 +547,7 @@ export default function App() {
                 <div className="text-xs text-[#94A3B8] flex items-center gap-1.5">
                   <span>{selectedSymbol} Spot</span>
                   <span aria-hidden="true">·</span>
-                  <span>M3 / M5 Reel</span>
+                  <span>M2 / M3 Reel</span>
                 </div>
                 <div className="mt-1.5 flex items-baseline justify-between gap-2">
                   <span className="text-xl font-semibold font-mono tabular-nums text-[#F8FAFC]">
@@ -562,7 +562,7 @@ export default function App() {
                         : 'text-[#94A3B8]'
                     }`}
                   >
-                    {latestTrend > 0 ? 'CISD HAUSSIER' : latestTrend < 0 ? 'CISD BAISSIER' : 'NEUTRE'}
+                    {latestTrend > 0 ? 'CHoCH HAUSSIER' : latestTrend < 0 ? 'CHoCH BAISSIER' : 'NEUTRE'}
                   </span>
                 </div>
               </div>
@@ -656,7 +656,6 @@ export default function App() {
                     sessions={snapshot.sessions}
                     unsweptLevels={snapshot.unsweptLevels}
                     swingPivots={snapshot.swingPivots}
-                    cisdSignals={snapshot.cisdSignals}
                     confluenceAlerts={snapshot.confluenceAlerts}
                     tzMode={snapshot.config.tzMode}
                     onRefresh={() => void handleRefreshFeed()}
@@ -851,7 +850,7 @@ export default function App() {
 
                         <label className="flex flex-col gap-1.5">
                           <span className="text-[#CBD5E1] font-medium">
-                            Filtre bruit CISD ({railTolerance.toFixed(1)})
+                            Structure CHoCH LuxAlgo ({railTolerance.toFixed(1)})
                           </span>
                           <input
                             type="range"

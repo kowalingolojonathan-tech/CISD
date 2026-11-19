@@ -7,7 +7,7 @@ async function bootstrap() {
   await installApiRuntime();
 
   if (needsServerSetup()) {
-    showSetup('Renseignez l\u2019adresse de votre serveur Killzone CISD Desk.');
+    showSetup('Renseignez l\u2019adresse de votre serveur Killzone CHoCH Desk.');
     return;
   }
 

@@ -62,6 +62,8 @@ export interface UnsweptLevel {
   swept: boolean;
   sweptAt: number | null;
   sweptBarIndex: number | null;
+  isGapLiquidity?: boolean;
+  sourceSweepId?: string;
 }
 
 export interface KillzoneSweepEvent {
@@ -77,6 +79,8 @@ export interface KillzoneSweepEvent {
   sweptAt: number;
   sweptBarIndex: number;
   sweepPrice: number;
+  isGapLiquidity?: boolean;
+  sourceSweepId?: string;
 }
 
 export interface SessionCountdown {
@@ -110,7 +114,7 @@ export interface CisdSignal {
   originBarIndex: number;
   noiseRatio: number;
   toleranceUsed: number;
-  strongSweep: boolean; // AlgoAlpha internal swing sweep + CISD
+  strongSweep: boolean; // Fractal structure CHoCH
   wickedSwingLevel: number | null;
   barsSinceSwing: number | null;
   closePrice: number;
@@ -146,12 +150,12 @@ export interface ConfluenceAlert {
   h4Bias: HtfBiasDirection;
   probability: ProbabilityTier;
   kzSweep: KillzoneSweepEvent;
-  cisd: CisdSignal;
+  choch: CisdSignal;
   /** Chart timeframe that produced this setup. */
-  timeframe?: 'M3' | 'M5';
-  /** All same-side session levels swept before this CISD (e.g. NY AM + NY PM). */
+  timeframe?: 'M2' | 'M3';
+  /** All same-side session levels swept before this CHoCH (e.g. NY AM + NY PM). */
   kzSweeps?: KillzoneSweepEvent[];
-  barsBetweenSweepAndCisd: number;
+  barsBetweenSweepAndChoch: number;
   closedInsideLevel: boolean;
   isPreReentry: boolean; // true = price has NOT yet re-entered inside the broken KZ level
   isIntrabarSignal: boolean; // true = fired live before timeframe candle close
@@ -166,9 +170,9 @@ export interface ConfluenceAlert {
   nextReminderAt: number | null;
   /** Stop-loss at the extreme wick of the swept session level(s). */
   stopLoss?: number;
-  /** Timestamp when the setup was invalidated by a post-CISD stop-loss touch. */
+  /** Timestamp when the setup was invalidated by a post-CHoCH stop-loss touch. */
   invalidatedAt?: number | null;
-  /** End of the 60-minute replacement-CISD observation window. */
+  /** End of the 60-minute replacement-CHoCH observation window. */
   retryUntil?: number | null;
 }
 
@@ -179,20 +183,20 @@ export interface EngineConfig {
   marketSource: MarketSourceType;
   twelveDataApiKey: string;
   tzMode: TimezoneMode;
-  // AlgoAlpha CISD M3 parameters
+  // LuxAlgo CHoCH fractal Market Structure parameters
   tolerance: number; // default 0.7
   swingPeriod: number; // default 12
   expiryBars: number; // default 100
   liquidityLookback: number; // default 10 (M3 bars)
   // Confluence & Killzone filtering
-  kzLookbackBars: number; // legacy compatibility; sweep-to-CISD window is the same NY day
-  requireActiveKillzone: boolean; // legacy setting; sweep must occur in Killzone, CISD may confirm later same NY day
-  triggerOnIntrabar: boolean; // true = signal immediately on live M3/M5 tick before bar close
+  kzLookbackBars: number; // legacy compatibility; sweep-to-CHoCH window is the same NY day
+  requireActiveKillzone: boolean; // legacy setting; sweep must occur in Killzone, CHoCH may confirm later same NY day
+  triggerOnIntrabar: boolean; // true = signal immediately on live M2/M3 tick before bar close
   // HTF Bias (Daily & H4)
   dailyBiasMode: HtfBiasMode;
   h4BiasMode: HtfBiasMode;
   highProbabilityOnly: boolean; // legacy compatibility flag; probability is now classification-only
-  enableM5Cisd: boolean; // run a separate M5 CISD engine alongside M3
+  enableM2Choch: boolean; // run a separate M2 CHoCH engine alongside M3
   // Telegram / Webhook & Repeat Alerts
   telegramBotToken: string;
   telegramChatId: string;
@@ -245,7 +249,6 @@ export interface EngineSnapshot {
   countdown: SessionCountdown;
   daySummaries: KillzoneDaySummary[];
   swingPivots: SwingPivot[];
-  cisdSignals: CisdSignal[];
   confluenceAlerts: ConfluenceAlert[];
   feedStatus: {
     source: MarketSourceType;

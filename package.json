@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx tests/dst.test.mts && tsx tests/level-age.test.mts && tsx tests/push.test.mts && tsx tests/pipeline.test.mts && tsx tests/feed.test.mts && tsx tests/localmode.test.mts && tsx tests/stoploss.test.mts"
+    "test": "tsx tests/choch.test.mts && tsx tests/gap-liquidity.test.mts && tsx tests/dst.test.mts && tsx tests/level-age.test.mts && tsx tests/push.test.mts && tsx tests/pipeline.test.mts && tsx tests/feed.test.mts && tsx tests/localmode.test.mts && tsx tests/stoploss.test.mts"
   },
   "dependencies": {
     "@capacitor/android": "^7.0.0",

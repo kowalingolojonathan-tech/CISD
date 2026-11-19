@@ -64,8 +64,10 @@ export function isPushConfigured(): boolean {
 
 export class PushTokenStore {
   private tokens: string[] = [];
+  private readonly filePath: string;
 
-  constructor(private readonly filePath: string) {
+  constructor(filePath: string) {
+    this.filePath = filePath;
     try {
       if (fs.existsSync(filePath)) {
         const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8')) as { tokens?: unknown };
@@ -328,7 +330,7 @@ export function sendPushForAlert(alert: ConfluenceAlert, reminderNumber = 1): Pr
 
 export function sendPushTest(): Promise<PushResult> {
   return broadcast({
-    title: 'Killzone CISD Desk \u00B7 Test',
+    title: 'Killzone CHoCH Desk \u00B7 Test',
     body: 'Les notifications push fonctionnent.',
     tag: 'cisd_test',
     data: { type: 'test' },

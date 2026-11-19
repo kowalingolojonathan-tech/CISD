@@ -19,7 +19,7 @@ async function setup(): Promise<boolean> {
   // High importance: heads-up banner + sound + vibration, also on the lock screen.
   await LocalNotifications.registerActionTypes({
     types: [{
-      id: 'CISD_ALERT_ACTIONS',
+      id: 'CHOCH_ALERT_ACTIONS',
       actions: [{ id: 'acknowledge', title: "J'ai vu · arrêter les rappels", foreground: true }],
     }],
   });
@@ -43,8 +43,8 @@ async function setup(): Promise<boolean> {
 
   await LocalNotifications.createChannel({
     id: 'signals',
-    name: 'Signaux CISD',
-    description: 'Alertes confluence Killzone + CISD',
+    name: 'Signaux CHoCH',
+    description: 'Alertes confluence Killzone + CHoCH',
     importance: 5,
     visibility: 1,
     vibration: true,
@@ -72,7 +72,7 @@ function notificationId(tag: string): number {
 async function show(id: number, title: string, body: string, extra?: { id?: string; symbol?: string }): Promise<void> {
   const { LocalNotifications } = await import('@capacitor/local-notifications');
   await LocalNotifications.schedule({
-    notifications: [{ id, title, body, channelId: 'signals', actionTypeId: extra?.id ? 'CISD_ALERT_ACTIONS' : undefined, extra }],
+    notifications: [{ id, title, body, channelId: 'signals', actionTypeId: extra?.id ? 'CHOCH_ALERT_ACTIONS' : undefined, extra }],
   });
 }
 
@@ -90,7 +90,7 @@ export async function testLocalNotification(): Promise<string> {
   if (!Capacitor.isNativePlatform()) return 'Notification locale indisponible (navigateur)';
   if (!(await initLocalNotifications())) return 'Notification locale refusee (autorisation manquante)';
   try {
-    await show(notificationId('cisd_test'), 'Killzone CISD Desk · Test', 'Les notifications locales fonctionnent.');
+    await show(notificationId('choch_test'), 'Killzone CHoCH Desk · Test', 'Les notifications locales fonctionnent.');
     return 'Notification locale envoyee';
   } catch (err) {
     return `Notification locale en erreur: ${err instanceof Error ? err.message : String(err)}`;

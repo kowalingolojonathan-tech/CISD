@@ -1,4 +1,5 @@
 import { CisdEngine } from './cisd.ts';
+import { ChochEngine } from './choch.ts';
 import { computeSessionCountdown, getNyDateTime, KillzonesEngine, nyCalendarDayDistance } from './killzones.ts';
 import { dispatchAlertWebhook } from './telegram.ts';
 import {
@@ -47,12 +48,12 @@ function trendToBias(t: number): HtfBiasDirection {
 export class TradingConfluenceEngine {
   private config: EngineConfig;
   private kzEngine: KillzonesEngine;
-  private cisdEngine: CisdEngine;
-  private cisdM5Engine: CisdEngine;
-  private confirmedM5Bars: Candle[] = [];
-  private liveM5Bar: Candle | null = null;
+  private chochM3Engine: ChochEngine;
+  private chochM2Engine: ChochEngine;
+  private confirmedM2Bars: Candle[] = [];
+  private liveM2Bar: Candle | null = null;
 
-  // Higher-timeframe (Daily & H4) CISD bias tracking
+  // Higher-timeframe (Daily & H4) CHoCH bias tracking
   private d1Bars: Candle[] = [];
   private d1Trends: number[] = [];
   private d1LastSignal: CisdSignal | null = null;
@@ -78,18 +79,8 @@ export class TradingConfluenceEngine {
   constructor(initialConfig: EngineConfig) {
     this.config = { ...initialConfig };
     this.kzEngine = new KillzonesEngine(this.config.tzMode);
-    this.cisdEngine = new CisdEngine({
-      tolerance: this.config.tolerance,
-      swingPeriod: this.config.swingPeriod,
-      expiryBars: this.config.expiryBars,
-      liquidityLookback: this.config.liquidityLookback,
-    });
-    this.cisdM5Engine = new CisdEngine({
-      tolerance: this.config.tolerance,
-      swingPeriod: this.config.swingPeriod,
-      expiryBars: this.config.expiryBars,
-      liquidityLookback: this.config.liquidityLookback,
-    });
+    this.chochM3Engine = new ChochEngine();
+    this.chochM2Engine = new ChochEngine();
   }
 
   /** Registers a fire-and-forget hook for the single notification sent for each new live setup. */
@@ -272,7 +263,7 @@ export class TradingConfluenceEngine {
   }
 
   /**
-   * Computes real Daily (D1) and 4-Hour (H4) CISD bias timeline.
+   * Computes real Daily (D1) and 4-Hour (H4) CHoCH bias timeline.
    */
   public loadHtfHistory(d1Bars: Candle[], h4Bars: Candle[], shouldEmit = true) {
     this.d1Bars = [...d1Bars];
@@ -377,12 +368,7 @@ export class TradingConfluenceEngine {
    */
   public loadHistory(bars: Candle[], liveBar: Candle | null = null) {
     this.kzEngine.reset(this.config.tzMode);
-    this.cisdEngine.reset({
-      tolerance: this.config.tolerance,
-      swingPeriod: this.config.swingPeriod,
-      expiryBars: this.config.expiryBars,
-      liquidityLookback: this.config.liquidityLookback,
-    });
+    this.chochM3Engine.reset();
     this.confirmedBars = [];
     this.liveBar = liveBar;
     this.confluenceAlerts = [];
@@ -437,24 +423,20 @@ export class TradingConfluenceEngine {
     this.emit();
   }
 
-  /** Loads real M5 candles built from 1-minute source data. Historical M5 setups never notify. */
-  public loadM5History(bars: Candle[], liveBar: Candle | null = null) {
-    this.cisdM5Engine.reset({
-      tolerance: this.config.tolerance,
-      swingPeriod: this.config.swingPeriod,
-      expiryBars: this.config.expiryBars,
-      liquidityLookback: this.config.liquidityLookback,
-    });
-    this.confirmedM5Bars = [];
-    this.liveM5Bar = liveBar;
-    if (!this.config.enableM5Cisd) return;
+  /** Loads real M2 candles built from 1-minute source data. Historical M2 setups never notify. */
+  public loadM2History(bars: Candle[], liveBar: Candle | null = null) {
+    this.chochM2Engine.reset();
+    this.confirmedM2Bars = [];
+    this.liveM2Bar = liveBar;
+    if (!this.config.enableM2Choch) return;
     for (const bar of bars) {
-      this.confirmedM5Bars.push({ ...bar, confirmed: true });
-      const signal = this.cisdM5Engine.processConfirmedBar(bar);
+      this.confirmedM2Bars.push({ ...bar, confirmed: true });
+      const m2Sweeps = this.kzEngine.previewLiveSweeps(bar, this.confirmedM2Bars.length - 1);
+      const signal = this.chochM2Engine.processConfirmedBar(bar);
       if (signal) {
         const alert = this.evaluateConfluence(
-          bar, this.confirmedM5Bars.length - 1, signal,
-          this.lastKzHighSweep, this.lastKzLowSweep, false, 'M5'
+          bar, this.confirmedM2Bars.length - 1, signal,
+          this.lastKzHighSweep, this.lastKzLowSweep, false, 'M2', m2Sweeps
         );
         if (alert) void this.recordAndDispatchAlert(alert, false);
       }
@@ -462,45 +444,48 @@ export class TradingConfluenceEngine {
     this.emit();
   }
 
-  /** Updates the independent M5 stream; it is never fabricated from M3 candles. */
-  public async ingestM5Bar(bar: Candle, isConfirmedClose: boolean) {
-    if (!this.config.enableM5Cisd) return;
-    const last = this.confirmedM5Bars[this.confirmedM5Bars.length - 1];
+  /** Updates the independent M2 stream; it is never fabricated from M3 candles. */
+  public async ingestM2Bar(bar: Candle, isConfirmedClose: boolean) {
+    if (!this.config.enableM2Choch) return;
+    const last = this.confirmedM2Bars[this.confirmedM2Bars.length - 1];
     if (last && bar.time < last.time) return;
     if (last && bar.time === last.time) return;
     if (isConfirmedClose) {
       this.invalidateStoppedSetups(bar);
-      if (this.liveM5Bar?.time === bar.time) this.liveM5Bar = null;
-      this.confirmedM5Bars.push({ ...bar, confirmed: true });
-      const signal = this.cisdM5Engine.processConfirmedBar(bar);
+      if (this.liveM2Bar?.time === bar.time) this.liveM2Bar = null;
+      this.confirmedM2Bars.push({ ...bar, confirmed: true });
+      const m2Sweeps = this.kzEngine.previewLiveSweeps(bar, this.confirmedM2Bars.length - 1);
+      const signal = this.chochM2Engine.processConfirmedBar(bar);
       if (signal) {
         const alert = this.evaluateConfluence(
-          bar, this.confirmedM5Bars.length - 1, signal,
-          this.lastKzHighSweep, this.lastKzLowSweep, false, 'M5'
+          bar, this.confirmedM2Bars.length - 1, signal,
+          this.lastKzHighSweep, this.lastKzLowSweep, false, 'M2', m2Sweeps
         );
         if (alert) await this.recordAndDispatchAlert(alert, true);
       }
     } else {
-      if (this.liveM5Bar && bar.time > this.liveM5Bar.time) {
-        const closed = { ...this.liveM5Bar, confirmed: true };
-        this.confirmedM5Bars.push(closed);
-        const signal = this.cisdM5Engine.processConfirmedBar(closed);
+      if (this.liveM2Bar && bar.time > this.liveM2Bar.time) {
+        const closed = { ...this.liveM2Bar, confirmed: true };
+        this.confirmedM2Bars.push(closed);
+        const m2Sweeps = this.kzEngine.previewLiveSweeps(closed, this.confirmedM2Bars.length - 1);
+        const signal = this.chochM2Engine.processConfirmedBar(closed);
         if (signal) {
           const alert = this.evaluateConfluence(
-            closed, this.confirmedM5Bars.length - 1, signal,
-            this.lastKzHighSweep, this.lastKzLowSweep, false, 'M5'
+            closed, this.confirmedM2Bars.length - 1, signal,
+            this.lastKzHighSweep, this.lastKzLowSweep, false, 'M2', m2Sweeps
           );
           if (alert) await this.recordAndDispatchAlert(alert, true);
         }
       }
-      this.liveM5Bar = bar;
+      this.liveM2Bar = bar;
       this.invalidateStoppedSetups(bar);
       if (this.config.triggerOnIntrabar) {
-        const signal = this.cisdM5Engine.previewLiveBar(bar);
+        const m2Sweeps = this.kzEngine.previewLiveSweeps(bar, this.confirmedM2Bars.length);
+        const signal = this.chochM2Engine.previewLiveBar(bar);
         if (signal) {
           const alert = this.evaluateConfluence(
-            bar, this.confirmedM5Bars.length, signal,
-            this.lastKzHighSweep, this.lastKzLowSweep, true, 'M5'
+            bar, this.confirmedM2Bars.length, signal,
+            this.lastKzHighSweep, this.lastKzLowSweep, true, 'M2', m2Sweeps
           );
           if (alert) await this.recordAndDispatchAlert(alert, true);
         }
@@ -521,7 +506,7 @@ export class TradingConfluenceEngine {
         patch.requireActiveKillzone !== this.config.requireActiveKillzone) ||
       (patch.dailyBiasMode !== undefined && patch.dailyBiasMode !== this.config.dailyBiasMode) ||
       (patch.h4BiasMode !== undefined && patch.h4BiasMode !== this.config.h4BiasMode) ||
-      (patch.enableM5Cisd !== undefined && patch.enableM5Cisd !== this.config.enableM5Cisd);
+      (patch.enableM2Choch !== undefined && patch.enableM2Choch !== this.config.enableM2Choch);
 
     this.config = { ...this.config, ...patch };
 
@@ -533,7 +518,7 @@ export class TradingConfluenceEngine {
       const existingBars = [...this.confirmedBars];
       const existingLive = this.liveBar ? { ...this.liveBar } : null;
       this.loadHistory(existingBars, existingLive);
-      if (this.confirmedM5Bars.length > 0) this.loadM5History([...this.confirmedM5Bars], this.liveM5Bar);
+      if (this.confirmedM2Bars.length > 0) this.loadM2History([...this.confirmedM2Bars], this.liveM2Bar);
     } else {
       this.emit();
     }
@@ -553,13 +538,13 @@ export class TradingConfluenceEngine {
       }
     }
 
-    const cisdSignal = this.cisdEngine.processConfirmedBar(bar);
+    const chochSignal = this.chochM3Engine.processConfirmedBar(bar);
 
-    if (cisdSignal) {
+    if (chochSignal) {
       const confluence = this.evaluateConfluence(
         bar,
         barIndex,
-        cisdSignal,
+        chochSignal,
         this.lastKzHighSweep,
         this.lastKzLowSweep,
         false
@@ -586,7 +571,7 @@ export class TradingConfluenceEngine {
       }
     }
 
-    const liveCisd = this.cisdEngine.previewLiveBar(liveBar);
+    const liveCisd = this.chochM3Engine.previewLiveBar(liveBar);
     if (!liveCisd) return;
 
     const confluence = this.evaluateConfluence(
@@ -617,7 +602,7 @@ export class TradingConfluenceEngine {
       alert.nextReminderAt = null;
       alert.invalidatedAt = bar.time;
       alert.retryUntil = bar.time + 60 * 60_000;
-      alert.webhookDetail = `Setup invalide: Stop Loss touche. Surveillance d'un nouveau CISD jusqu'a ${new Date(alert.retryUntil).toISOString()}`;
+      alert.webhookDetail = `Setup invalide: Stop Loss touche. Surveillance d'un nouveau CHoCH jusqu'a ${new Date(alert.retryUntil).toISOString()}`;
       this.saveAckState(alert);
       changed = true;
     }
@@ -641,8 +626,8 @@ export class TradingConfluenceEngine {
 
     if (this.confluenceAlerts.some((a) => a.dedupeKey === confluence.dedupeKey)) return;
     this.confluenceAlerts.unshift(confluence);
-    if (this.confluenceAlerts.length > 300) {
-      this.confluenceAlerts.length = 300;
+    if (this.confluenceAlerts.length > 1500) {
+      this.confluenceAlerts.length = 1500;
     }
 
     if (saved) {
@@ -698,27 +683,29 @@ export class TradingConfluenceEngine {
   private evaluateConfluence(
     bar: Candle,
     barIndex: number,
-    cisd: CisdSignal,
+    choch: CisdSignal,
     highSweep: KillzoneSweepEvent | null,
     lowSweep: KillzoneSweepEvent | null,
     isIntrabarSignal: boolean,
-    timeframe: 'M3' | 'M5' = 'M3',
+    timeframe: 'M3' | 'M2' = 'M3',
     additionalSweeps: KillzoneSweepEvent[] = []
   ): ConfluenceAlert | null {
     const ny = getNyDateTime(bar.time, this.config.tzMode);
-    const intervalMs = timeframe === 'M5' ? 5 * 60_000 : 3 * 60_000;
+    const intervalMs = timeframe === 'M2' ? 2 * 60_000 : 3 * 60_000;
+    const pendingGapSources = new Set(this.kzEngine.getPendingGapSourceSweepIds(bar.time));
     const allSweeps = [...this.kzEngine.getSweepEvents(), highSweep, lowSweep, ...additionalSweeps]
       .filter((x): x is KillzoneSweepEvent => !!x)
-      .filter((x, i, arr) => arr.findIndex((y) => y.id === x.id) === i);
-    const isBearish = cisd.direction === 'bearish';
+      .filter((x, i, arr) => arr.findIndex((y) => y.id === x.id) === i)
+      .filter((sw) => !pendingGapSources.has(sw.id));
+    const isBearish = choch.direction === 'bearish';
     // A valid setup starts when price sweeps a previously formed session high/low.
     // The source level may come from today's, yesterday's, or the previous NY day's
     // Asia/London/NY AM/NY PM range. The sweep itself may happen outside a Killzone.
-    // Accept a matching CISD later on the same NY day as the sweep, whether it occurs
+    // Accept a matching CHoCH later on the same NY day as the sweep, whether it occurs
     // before or after the price retests/re-enters the swept level. Source level age: 0-2 days.
     const direction = isBearish ? 'BEARISH' : 'BULLISH';
     // Historical/backfilled alerts do not participate in live setup sequencing.
-    // A live CISD consumes the sweeps that preceded it: another CISD cannot reuse
+    // A live CHoCH consumes the sweeps that preceded it: another CHoCH cannot reuse
     // those old sweeps to manufacture an opposite or duplicate reversal signal.
     const latestLiveAlert = this.confluenceAlerts
       .filter((a) => a.ackStatus !== 'historical' && a.timeframe === timeframe)
@@ -726,7 +713,7 @@ export class TradingConfluenceEngine {
 
     // After a stop is hit, keep watching the original reversal direction for
     // 60 minutes. During that window, only a NEW matching-side sweep can restart
-    // the setup. An opposite CISD is ignored even if older opposite-side sweeps exist.
+    // the setup. An opposite CHoCH is ignored even if older opposite-side sweeps exist.
     const activeRetry = this.confluenceAlerts
       .filter((a) => a.ackStatus === 'invalidated' && a.timeframe === timeframe && a.invalidatedAt != null &&
         a.retryUntil != null && bar.time > a.invalidatedAt && bar.time <= a.retryUntil)
@@ -734,7 +721,7 @@ export class TradingConfluenceEngine {
 
     if (activeRetry && activeRetry.direction !== direction) return null;
 
-    // Sweeps before the most recent live CISD are consumed. A retry requires a
+    // Sweeps before the most recent live CHoCH are consumed. A retry requires a
     // sweep after the SL timestamp; after the 60-minute window, a fresh sweep
     // after expiry is mandatory before either direction can signal again.
     let sweepCutoff = latestLiveAlert?.timestamp ?? Number.NEGATIVE_INFINITY;
@@ -757,14 +744,17 @@ export class TradingConfluenceEngine {
     if (candidates.length === 0) return null;
 
     const latestSweep = candidates[candidates.length - 1];
+    // Attribute the CHoCH only to the latest sweep event (plus levels swept on the same bar).
+    // Older unrelated session levels must not be bundled into a new alert.
+    const responsibleSweeps = candidates.filter((sw) => sw.sweptAt === latestSweep.sweptAt);
     // Include sweep event IDs, not only source level IDs: the same level may be
     // swept again later and must represent a distinct opportunity.
-    const sweepSignature = `${timeframe}_${candidates.map((x) => x.id).sort().join('+')}_${direction}`;
-    const dedupeKey = `${sweepSignature}_${cisd.time}`;
+    const sweepSignature = `${timeframe}_${responsibleSweeps.map((x) => `${x.levelId}_${x.sweptAt}`).sort().join('+')}_${direction}`;
+    const dedupeKey = `${sweepSignature}_${choch.time}`;
     if (this.consumedSweepKeys.has(dedupeKey)) return null;
     this.consumedSweepKeys.add(dedupeKey);
 
-    const closedInsideLevel = candidates.every((sw) =>
+    const closedInsideLevel = responsibleSweeps.every((sw) =>
       isBearish ? bar.close < sw.level : bar.close > sw.level
     );
     const { dailyBias, h4Bias, probability } = this.computeProbabilityAt(bar.time, direction);
@@ -780,14 +770,14 @@ export class TradingConfluenceEngine {
       h4Bias,
       probability,
       kzSweep: latestSweep,
-      kzSweeps: candidates,
-      cisd,
+      kzSweeps: responsibleSweeps,
+      choch,
       timeframe,
-      barsBetweenSweepAndCisd: Math.max(0, Math.floor((bar.time - latestSweep.sweptAt) / intervalMs)),
+      barsBetweenSweepAndChoch: Math.max(0, Math.floor((bar.time - latestSweep.sweptAt) / intervalMs)),
       closedInsideLevel,
       isPreReentry: !closedInsideLevel,
       isIntrabarSignal,
-      hasInternalSwingSweep: cisd.strongSweep,
+      hasInternalSwingSweep: choch.strongSweep,
       webhookStatus: 'skipped',
       webhookDetail: isIntrabarSignal ? `Temps reel ${timeframe}` : `Historique ${timeframe}`,
       ackStatus: 'historical',
@@ -796,7 +786,7 @@ export class TradingConfluenceEngine {
       reminderCount: 0,
       lastReminderAt: null,
       nextReminderAt: null,
-      stopLoss: isBearish ? Math.max(...candidates.map((sw) => sw.sweepPrice)) : Math.min(...candidates.map((sw) => sw.sweepPrice)),
+      stopLoss: isBearish ? Math.max(...responsibleSweeps.map((sw) => sw.sweepPrice)) : Math.min(...responsibleSweeps.map((sw) => sw.sweepPrice)),
       invalidatedAt: null,
       retryUntil: null,
     };
@@ -843,8 +833,8 @@ export class TradingConfluenceEngine {
             sweptBarIndex: Math.max(0, this.confirmedBars.length - 1),
             sweepPrice: Number((price + step).toFixed(decimals)),
           },
-          cisd: {
-            id: 'test_cisd',
+          choch: {
+            id: 'test_choch',
             barIndex: Math.max(0, this.confirmedBars.length - 1),
             time: now,
             direction: htf.alignedDirection === 'BULLISH' ? 'bullish' : 'bearish',
@@ -857,7 +847,7 @@ export class TradingConfluenceEngine {
             barsSinceSwing: 1,
             closePrice: price,
           },
-          barsBetweenSweepAndCisd: 0,
+          barsBetweenSweepAndChoch: 0,
           closedInsideLevel: false,
           isPreReentry: true,
           isIntrabarSignal: true,
@@ -894,8 +884,8 @@ export class TradingConfluenceEngine {
       ? [...this.confirmedBars, this.liveBar]
       : [...this.confirmedBars];
 
-    const currentTrend = this.cisdEngine.getCurrentTrend();
-    const baseTrends = this.cisdEngine.getCandleTrends();
+    const currentTrend = this.chochM3Engine.getCurrentTrend();
+    const baseTrends = this.chochM3Engine.getCandleTrends();
     const candleTrends = this.liveBar ? [...baseTrends, currentTrend] : baseTrends;
 
     const latestClose = allCandles.length > 0 ? allCandles[allCandles.length - 1].close : 0;
@@ -915,7 +905,7 @@ export class TradingConfluenceEngine {
         dailyBiasMode: this.config.dailyBiasMode,
         h4BiasMode: this.config.h4BiasMode,
         highProbabilityOnly: this.config.highProbabilityOnly,
-        enableM5Cisd: this.config.enableM5Cisd,
+        enableM2Choch: this.config.enableM2Choch,
         telegramChatId: this.config.telegramChatId,
         customWebhookUrl: this.config.customWebhookUrl,
         alertsEnabled: this.config.alertsEnabled,
@@ -933,8 +923,7 @@ export class TradingConfluenceEngine {
       sweepEvents: this.kzEngine.getSweepEvents(),
       countdown: computeSessionCountdown(Date.now(), this.config.tzMode),
       daySummaries: this.kzEngine.getDaySummaries(latestClose),
-      swingPivots: this.cisdEngine.getSwingPivots(),
-      cisdSignals: this.cisdEngine.getCisdSignals(),
+      swingPivots: [],
       confluenceAlerts: this.confluenceAlerts,
       feedStatus: {
         source: this.config.marketSource,

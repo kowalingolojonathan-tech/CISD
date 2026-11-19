@@ -23,7 +23,7 @@ function makeEngine(): TradingConfluenceEngine {
     symbol: 'XAU/USD', marketSource: 'yahoo_swissquote', twelveDataApiKey: '', tzMode: 'Auto (DST)',
     tolerance: 0.7, swingPeriod: 12, expiryBars: 100, liquidityLookback: 10, kzLookbackBars: 10,
     requireActiveKillzone: true, triggerOnIntrabar: true, dailyBiasMode: 'AUTO', h4BiasMode: 'AUTO',
-    highProbabilityOnly: false, enableM5Cisd: true, telegramBotToken: '', telegramChatId: '', customWebhookUrl: '',
+    highProbabilityOnly: false, enableM2Choch: true, telegramBotToken: '', telegramChatId: '', customWebhookUrl: '',
     alertsEnabled: true, repeatAlertIntervalSec: 30, liveSetupMaxMinutes: 20,
   };
   return new TradingConfluenceEngine(cfg);
@@ -55,6 +55,7 @@ await feed.reload(); (feed as any).isRunning = true;
 let snap = eng.getSnapshot();
 const lastClose = snap.candles[snap.candles.length - 1].close;
 ok(snap.feedStatus.connected, 'feed connected via fallback');
+ok((eng as any).confirmedM2Bars.length > 0, `independent M2 candles loaded from Yahoo 1-minute data (${(eng as any).confirmedM2Bars.length})`);
 ok(Math.abs(lastClose - 4000) < 5, `futures bars re-based to spot: last close ${lastClose} (raw futures ~4040)`);
 ok(calls.some((c) => c.includes('XAUUSD')) && calls.some((c) => c.includes('GC')), 'tried spot ticker first, then GC=F');
 

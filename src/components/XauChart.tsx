@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   formatSymbolPrice,
   type Candle,
-  type CisdSignal,
   type ConfluenceAlert,
   type SessionBox,
   type SupportedSymbol,
@@ -18,7 +17,6 @@ interface XauChartProps {
   sessions: SessionBox[];
   unsweptLevels: UnsweptLevel[];
   swingPivots: SwingPivot[];
-  cisdSignals: CisdSignal[];
   confluenceAlerts: ConfluenceAlert[];
   tzMode: TimezoneMode;
   onRefresh: () => void;
@@ -57,7 +55,6 @@ export const XauChart: React.FC<XauChartProps> = ({
   sessions,
   unsweptLevels,
   swingPivots,
-  cisdSignals,
   confluenceAlerts,
   tzMode,
   onRefresh,
@@ -72,7 +69,7 @@ export const XauChart: React.FC<XauChartProps> = ({
   const [showBoxes, setShowBoxes] = useState<boolean>(true);
   const [showUnswept, setShowUnswept] = useState<boolean>(true);
   const [showSwings, setShowSwings] = useState<boolean>(true);
-  const [showCisd, setShowCisd] = useState<boolean>(true);
+  const [showChoch, setShowChoch] = useState<boolean>(true);
 
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null);
@@ -93,10 +90,14 @@ export const XauChart: React.FC<XauChartProps> = ({
     return { start, end };
   }, [candles.length, visibleCount, panOffset]);
 
+  const m3StructureSignals = useMemo(
+    () => confluenceAlerts.filter((a) => a.timeframe === 'M3').map((a) => a.choch),
+    [confluenceAlerts]
+  );
   const confluenceByBar = useMemo(() => {
     const map = new Map<number, ConfluenceAlert>();
     for (const a of confluenceAlerts) {
-      map.set(a.cisd.barIndex, a);
+      if (a.timeframe === 'M3') map.set(a.choch.barIndex, a);
     }
     return map;
   }, [confluenceAlerts]);
@@ -313,7 +314,7 @@ export const XauChart: React.FC<XauChartProps> = ({
         }
       }
 
-      // 4. Candlesticks colored by CISD trend
+      // 4. Candlesticks colored by CHoCH structure trend
       for (let i = start; i < end; i++) {
         const c = candles[i];
         const tr = candleTrends[i] ?? 0;
@@ -352,9 +353,9 @@ export const XauChart: React.FC<XauChartProps> = ({
         ctx.strokeRect(x - candleW / 2, bodyTop, candleW, bodyH);
       }
 
-      // 5. CISD Origin Lines & Confluence Markers
-      if (showCisd) {
-        for (const sig of cisdSignals) {
+      // 5. CHoCH Origin Lines & Confluence Markers
+      if (showChoch) {
+        for (const sig of m3StructureSignals) {
           if (sig.barIndex < start && sig.originBarIndex < start) continue;
           if (sig.originBarIndex >= end) continue;
 
@@ -374,7 +375,7 @@ export const XauChart: React.FC<XauChartProps> = ({
             const sx = xForIndex(sig.barIndex);
             const conf = confluenceByBar.get(sig.barIndex);
             if (conf) {
-              // Highlight Confluence Signal (Killzone Sweep + M3 CISD)
+              // Highlight Confluence Signal (Killzone Sweep + M3 CHoCH)
               const cy =
                 sig.direction === 'bearish'
                   ? yForPrice(candles[sig.barIndex].high) - 14
@@ -464,13 +465,12 @@ export const XauChart: React.FC<XauChartProps> = ({
     sessions,
     unsweptLevels,
     swingPivots,
-    cisdSignals,
-    confluenceByBar,
+      confluenceByBar,
     viewSlice,
     showBoxes,
     showUnswept,
     showSwings,
-    showCisd,
+    showChoch,
     hoverIdx,
     hoverPos,
     tzMode,
@@ -558,7 +558,7 @@ export const XauChart: React.FC<XauChartProps> = ({
               { label: 'Boxes', active: showBoxes, toggle: () => setShowBoxes((v) => !v) },
               { label: 'Unswept', active: showUnswept, toggle: () => setShowUnswept((v) => !v) },
               { label: 'Swings', active: showSwings, toggle: () => setShowSwings((v) => !v) },
-              { label: 'CISD', active: showCisd, toggle: () => setShowCisd((v) => !v) },
+              { label: 'CHoCH', active: showChoch, toggle: () => setShowChoch((v) => !v) },
             ].map((item) => (
               <button
                 key={item.label}

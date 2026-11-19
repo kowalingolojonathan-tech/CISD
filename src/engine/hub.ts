@@ -121,7 +121,7 @@ export class EngineHub {
         htf?.dailyBiasMode ?? (symbol === 'XAU/USD' ? p.dailyBiasMode ?? 'AUTO' : 'AUTO'),
       h4BiasMode: htf?.h4BiasMode ?? (symbol === 'XAU/USD' ? p.h4BiasMode ?? 'AUTO' : 'AUTO'),
       highProbabilityOnly: false,
-      enableM5Cisd: p.enableM5Cisd ?? true,
+      enableM2Choch: p.enableM2Choch ?? true,
       telegramBotToken: p.telegramBotToken || this.env.telegramBotToken || '',
       telegramChatId: p.telegramChatId || this.env.telegramChatId || '',
       customWebhookUrl: p.customWebhookUrl ?? '',
@@ -145,7 +145,7 @@ export class EngineHub {
         requireActiveKillzone: xau.requireActiveKillzone,
         triggerOnIntrabar: xau.triggerOnIntrabar,
         highProbabilityOnly: xau.highProbabilityOnly,
-        enableM5Cisd: xau.enableM5Cisd,
+        enableM2Choch: xau.enableM2Choch,
         telegramBotToken: xau.telegramBotToken,
         telegramChatId: xau.telegramChatId,
         customWebhookUrl: xau.customWebhookUrl,
@@ -274,8 +274,8 @@ export class EngineHub {
     if (body.h4BiasMode === 'AUTO' || body.h4BiasMode === 'BULLISH' || body.h4BiasMode === 'BEARISH') {
       htf.h4BiasMode = body.h4BiasMode;
     }
-    shared.highProbabilityOnly = false; // Legacy setting retained for compatibility; all in-killzone CISDs remain alertable.
-    if (typeof body.enableM5Cisd === 'boolean') shared.enableM5Cisd = body.enableM5Cisd;
+    shared.highProbabilityOnly = false; // Legacy setting retained for compatibility; all in-killzone CHoCH signals remain alertable.
+    if (typeof body.enableM2Choch === 'boolean') shared.enableM2Choch = body.enableM2Choch;
     if (typeof body.telegramBotToken === 'string' && body.telegramBotToken.trim().length > 0) {
       shared.telegramBotToken = body.telegramBotToken.trim();
     }

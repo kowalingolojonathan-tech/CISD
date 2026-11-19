@@ -180,6 +180,16 @@ interface InternalSessionSlot {
   currentBoxIndex: number | null;
 }
 
+interface GapLiquidityTracker {
+  sourceSweepId: string;
+  sessionId: SessionId;
+  sessionName: string;
+  isHigh: boolean;
+  extreme: number;
+  createdAt: number;
+  createdBarIndex: number;
+}
+
 export class KillzonesEngine {
   private sessionsConfig: SessionConfig[];
   private tzMode: TimezoneMode;
@@ -187,6 +197,9 @@ export class KillzonesEngine {
   private boxes: SessionBox[] = [];
   private unsweptLevels: UnsweptLevel[] = [];
   private sweepEvents: KillzoneSweepEvent[] = [];
+  private gapTrackers: GapLiquidityTracker[] = [];
+  private pendingGapSourceSweepIds = new Set<string>();
+  private pendingGapSourceWindows = new Map<string, { from: number; until: number | null }>();
   private currentDayKey: string | null = null;
   private uidCounter = 0;
 
@@ -214,6 +227,9 @@ export class KillzonesEngine {
     this.boxes = [];
     this.unsweptLevels = [];
     this.sweepEvents = [];
+    this.gapTrackers = [];
+    this.pendingGapSourceSweepIds.clear();
+    this.pendingGapSourceWindows.clear();
     this.currentDayKey = null;
     this.uidCounter = 0;
     this.slots = this.sessionsConfig.map((cfg) => ({
@@ -242,6 +258,7 @@ export class KillzonesEngine {
     }
     this.currentDayKey = ny.dayKey;
 
+    const newSessionStarts: SessionConfig[] = [];
     for (const slot of this.slots) {
       const { startMins, endMins } = parseSessionRange(slot.config.range);
       const curInSession = slot.config.enabled && ny.minsOfDay >= startMins && ny.minsOfDay < endMins;
@@ -254,6 +271,7 @@ export class KillzonesEngine {
       const isEnd = !slot.active && slot.prevActive;
 
       if (isNew) {
+        newSessionStarts.push(slot.config);
         slot.occurredToday = true;
         slot.hi = bar.high;
         slot.lo = bar.low;
@@ -339,6 +357,40 @@ export class KillzonesEngine {
       }
     }
 
+    // If a previous session level was broken before this session began, the
+    // breakout leg's extreme becomes intermediate liquidity that the new
+    // session must sweep before its CHoCH can qualify.
+    if (newSessionStarts.length > 0 && this.gapTrackers.length > 0) {
+      const nextSession = newSessionStarts[0];
+      const remaining: GapLiquidityTracker[] = [];
+      for (const tracker of this.gapTrackers) {
+        if (tracker.createdAt >= bar.time) {
+          remaining.push(tracker);
+          continue;
+        }
+        const gapLevelId = `gap_lvl_${++this.uidCounter}`;
+        this.unsweptLevels.push({
+          id: gapLevelId,
+          sessionId: tracker.sessionId,
+          sessionName: `Gap ${tracker.sessionName} → ${nextSession.name}`,
+          shortName: 'GAP',
+          color: nextSession.color,
+          isHigh: tracker.isHigh,
+          level: tracker.extreme,
+          createdAt: tracker.createdAt,
+          createdBarIndex: barIndex,
+          swept: false,
+          sweptAt: null,
+          sweptBarIndex: null,
+          isGapLiquidity: true,
+          sourceSweepId: tracker.sourceSweepId,
+        });
+        this.pendingGapSourceSweepIds.add(tracker.sourceSweepId);
+        this.pendingGapSourceWindows.set(tracker.sourceSweepId, { from: bar.time, until: null });
+      }
+      this.gapTrackers = remaining;
+    }
+
     // Unswept Level Sweep Detection (exact match to Pine Script lines 313-336)
     const newSweeps: KillzoneSweepEvent[] = [];
     for (const lvl of this.unsweptLevels) {
@@ -360,10 +412,35 @@ export class KillzonesEngine {
           sweptAt: bar.time,
           sweptBarIndex: barIndex,
           sweepPrice: lvl.isHigh ? bar.high : bar.low,
+          isGapLiquidity: lvl.isGapLiquidity ?? false,
+          sourceSweepId: lvl.sourceSweepId,
         };
+        if (lvl.isGapLiquidity && lvl.sourceSweepId) {
+          this.pendingGapSourceSweepIds.delete(lvl.sourceSweepId);
+          const window = this.pendingGapSourceWindows.get(lvl.sourceSweepId);
+          if (window) this.pendingGapSourceWindows.set(lvl.sourceSweepId, { ...window, until: bar.time });
+        }
         newSweeps.push(evt);
         this.sweepEvents.unshift(evt);
       }
+    }
+
+    for (const sw of newSweeps) {
+      this.gapTrackers.push({
+        sourceSweepId: sw.id,
+        sessionId: sw.sessionId,
+        sessionName: sw.sessionName,
+        isHigh: sw.isHigh,
+        extreme: sw.sweepPrice,
+        createdAt: sw.sweptAt,
+        createdBarIndex: barIndex,
+      });
+    }
+    for (const tracker of this.gapTrackers) {
+      if (tracker.createdAt >= bar.time) continue;
+      tracker.extreme = tracker.isHigh
+        ? Math.max(tracker.extreme, bar.high)
+        : Math.min(tracker.extreme, bar.low);
     }
 
     if (this.sweepEvents.length > 200) {
@@ -403,6 +480,8 @@ export class KillzonesEngine {
           sweptAt: liveBar.time,
           sweptBarIndex: liveBarIndex,
           sweepPrice: lvl.isHigh ? liveBar.high : liveBar.low,
+          isGapLiquidity: lvl.isGapLiquidity ?? false,
+          sourceSweepId: lvl.sourceSweepId,
         });
       }
     }
@@ -423,6 +502,14 @@ export class KillzonesEngine {
 
   public getSweepEvents(): KillzoneSweepEvent[] {
     return this.sweepEvents;
+  }
+
+  /** Source sweeps temporarily blocked until the next session takes the gap liquidity. */
+  public getPendingGapSourceSweepIds(atTime?: number): string[] {
+    if (atTime === undefined) return [...this.pendingGapSourceSweepIds];
+    return [...this.pendingGapSourceWindows.entries()]
+      .filter(([, window]) => atTime >= window.from && (window.until === null || atTime < window.until))
+      .map(([sourceSweepId]) => sourceSweepId);
   }
 
   public getDaySummaries(latestClose: number): KillzoneDaySummary[] {

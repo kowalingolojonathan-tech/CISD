@@ -42,7 +42,7 @@ export function formatTelegramMessage(alert: ConfluenceAlert, reminderNumber = 1
       : `<b>🔴 SIGNAL EN COURS — VALIDATION REQUISE</b>\n`;
   const swingLine = alert.hasInternalSwingSweep
     ? `\n• <b>Swing Sweep AlgoAlpha :</b> Confirme (${
-        alert.cisd.wickedSwingLevel !== null ? fmt(alert.cisd.wickedSwingLevel) : '-'
+        alert.choch.wickedSwingLevel !== null ? fmt(alert.choch.wickedSwingLevel) : '-'
       })`
     : '';
 
@@ -52,11 +52,11 @@ export function formatTelegramMessage(alert: ConfluenceAlert, reminderNumber = 1
     `<b>Biais HTF :</b> Daily <code>${biasFr(alert.dailyBias)}</code> · H4 <code>${biasFr(alert.h4Bias)}</code>`,
     `<b>Killzone Active :</b> ${sessionLabel}`,
     `<b>Niveaux balayes (${sweeps.length}) :</b>\n${sweepLines.join('\n')}`, 
-    `<b>Prix Actuel / Sweep :</b> <code>${fmt(alert.cisd.closePrice)}</code> (Meche: <code>${fmt(alert.kzSweep.sweepPrice)}</code>)`,
+    `<b>Prix Actuel / Sweep :</b> <code>${fmt(alert.choch.closePrice)}</code> (Meche: <code>${fmt(alert.kzSweep.sweepPrice)}</code>)`,
     `<b>Stop Loss (extreme du sweep) :</b> <code>${fmt(alert.stopLoss ?? alert.kzSweep.sweepPrice)}</code>`,
     `<b>Position Prix :</b> ${phaseLabel}`,
-    `<b>CISD ${timeframe} :</b> Origine <code>${fmt(alert.cisd.originLevel)}</code> · Ratio <code>${alert.cisd.noiseRatio.toFixed(2)}</code> (&gt; ${alert.cisd.toleranceUsed})`,
-    `<b>Declenchement :</b> ${timingLabel} · Delai ${alert.barsBetweenSweepAndCisd} bougie(s) ${timeframe}${swingLine}`,
+    `<b>CHoCH ${timeframe} :</b> Origine <code>${fmt(alert.choch.originLevel)}</code> · Fractale LuxAlgo · confirmation par changement de structure`,
+    `<b>Declenchement :</b> ${timingLabel} · Delai ${alert.barsBetweenSweepAndChoch} bougie(s) ${timeframe}${swingLine}`,
     `<b>Heure NY :</b> <code>${alert.nyTimeStr}</code>`,
   ].join('\n');
 }
@@ -147,7 +147,7 @@ export async function dispatchAlertWebhook(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          event: 'ICT_KILLZONE_CISD_CONFLUENCE',
+          event: 'ICT_KILLZONE_CHOCH_CONFLUENCE',
           reminderNumber: reminderNum,
           alert,
           message: formatTelegramMessage(alert, reminderNum),

@@ -23,8 +23,8 @@ export async function initNativePush(): Promise<void> {
   // High-importance channel: heads-up banner + sound + vibration, even on the lock screen.
   await PushNotifications.createChannel({
     id: 'signals',
-    name: 'Signaux CISD',
-    description: 'Alertes confluence Killzone + CISD',
+    name: 'Signaux CHoCH',
+    description: 'Alertes confluence Killzone + CHoCH',
     importance: 5,
     visibility: 1,
     vibration: true,

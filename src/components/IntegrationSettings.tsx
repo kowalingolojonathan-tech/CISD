@@ -26,7 +26,7 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
   const [triggerOnIntrabar, setTriggerOnIntrabar] = useState<boolean>(config.triggerOnIntrabar);
   const [dailyBiasMode, setDailyBiasMode] = useState<HtfBiasMode>(config.dailyBiasMode);
   const [h4BiasMode, setH4BiasMode] = useState<HtfBiasMode>(config.h4BiasMode);
-  const [enableM5Cisd, setEnableM5Cisd] = useState<boolean>(config.enableM5Cisd ?? true);
+  const [enableM2Choch, setEnableM2Choch] = useState<boolean>(config.enableM2Choch ?? true);
   const [telegramBotToken, setTelegramBotToken] = useState<string>('');
   const [showToken, setShowToken] = useState<boolean>(false);
   const [telegramChatId, setTelegramChatId] = useState<string>(config.telegramChatId);
@@ -71,7 +71,7 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
     setTriggerOnIntrabar(config.triggerOnIntrabar);
     setDailyBiasMode(config.dailyBiasMode);
     setH4BiasMode(config.h4BiasMode);
-    setEnableM5Cisd(config.enableM5Cisd ?? true);
+    setEnableM2Choch(config.enableM2Choch ?? true);
     setTelegramChatId(config.telegramChatId);
     setCustomWebhookUrl(config.customWebhookUrl);
     setAlertsEnabled(config.alertsEnabled);
@@ -96,7 +96,7 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
         dailyBiasMode,
         h4BiasMode,
         highProbabilityOnly: false,
-        enableM5Cisd,
+        enableM2Choch,
         telegramChatId,
         customWebhookUrl,
         alertsEnabled,
@@ -138,7 +138,7 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
       >
         <div>
           <h2 className="text-base font-semibold text-[#F1F5F9]">
-            Parametres Killzones ICT et CISD M3 / M5
+            Parametres Killzones ICT et CHoCH M2 / M3
           </h2>
           <p className="mt-1 text-xs text-[#94A3B8]">
             Les moteurs XAU/USD et EUR/USD surveillent en parallele. Daily et H4 sont analyses separement : ils peuvent etre divergents.
@@ -161,7 +161,7 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
 
           <label className="flex flex-col gap-1.5 text-xs">
             <span className="text-[#CBD5E1] font-medium">
-              Noise Filter CISD (tolerence : {tolerance.toFixed(1)})
+              Filtre du biais Daily/H4 (tolerence : {tolerance.toFixed(1)})
             </span>
             <input
               type="range"
@@ -175,7 +175,7 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
           </label>
 
           <label className="flex flex-col gap-1.5 text-xs">
-            <span className="text-[#CBD5E1] font-medium">Swing Period (len M3)</span>
+            <span className="text-[#CBD5E1] font-medium">Pivot Period Daily/H4</span>
             <input
               type="number"
               min={3}
@@ -187,7 +187,7 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
           </label>
 
           <label className="flex flex-col gap-1.5 text-xs">
-            <span className="text-[#CBD5E1] font-medium">Expiry Bars (M3)</span>
+            <span className="text-[#CBD5E1] font-medium">Pivot Expiry Daily/H4</span>
             <input
               type="number"
               min={20}
@@ -199,7 +199,7 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
           </label>
 
           <label className="flex flex-col gap-1.5 text-xs">
-            <span className="text-[#CBD5E1] font-medium">Liquidity Lookback Swing (M3)</span>
+            <span className="text-[#CBD5E1] font-medium">Liquidity Lookback Daily/H4</span>
             <input
               type="number"
               min={1}
@@ -215,17 +215,17 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
         <div className="pt-2 border-t border-[#1E293B] flex flex-col gap-4">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <span className="text-sm font-medium text-[#F1F5F9]">Detection CISD M5 en complement du M3</span>
-              <p className="text-xs text-[#94A3B8]">Moteur M5 independant, calcule depuis les bougies 1 minute du flux Yahoo. Les deux timeframes peuvent produire leurs propres alertes.</p>
+              <span className="text-sm font-medium text-[#F1F5F9]">Detection CHoCH M2 en complement du M3</span>
+              <p className="text-xs text-[#94A3B8]">Moteur M2 independant, calcule depuis les bougies 1 minute du flux Yahoo. Les deux timeframes peuvent produire leurs propres alertes.</p>
             </div>
-            <button type="button" onClick={() => setEnableM5Cisd((v) => !v)} className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-colors shrink-0 cursor-pointer ${enableM5Cisd ? 'bg-[#10B981]/15 border-[#10B981]/50 text-[#10B981]' : 'bg-[#0B0F17] border-[#1E293B] text-[#94A3B8]'}`}>
-              {enableM5Cisd ? 'M5 active' : 'M5 desactive'}
+            <button type="button" onClick={() => setEnableM2Choch((v) => !v)} className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-colors shrink-0 cursor-pointer ${enableM2Choch ? 'bg-[#10B981]/15 border-[#10B981]/50 text-[#10B981]' : 'bg-[#0B0F17] border-[#1E293B] text-[#94A3B8]'}`}>
+              {enableM2Choch ? 'M2 active' : 'M2 desactive'}
             </button>
           </div>
           <div className="rounded-md border border-[#1E293B] bg-[#0B0F17] p-3">
             <span className="text-sm font-medium text-[#F1F5F9]">Surveillance apres sweep — jusqu'a la cloture NY</span>
             <p className="mt-1 text-xs leading-relaxed text-[#94A3B8]">
-              Le sweep initial doit se produire dans une Killzone (Asia, London, NY AM ou NY PM). Apres ce sweep, le moteur continue de chercher un CISD M3/M5, meme apres la fin de la Killzone et apres un retest ou une reintegration, jusqu'a 23:59 heure de New York. Le Daily et le H4 servent a classer la probabilite, pas a bloquer les alertes divergentes.
+              Les niveaux des sessions Asia, London, NY AM et NY PM sont surveilles. Un CHoCH de retournement valide peut apparaitre avant ou apres la reintegration du niveau casse, meme hors Killzone, jusqu'a 23:59 heure de New York. Le Daily et le H4 servent a classer la probabilite, pas a bloquer les alertes divergentes.
             </p>
           </div>
 
@@ -233,7 +233,7 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
             <div>
               <span className="text-sm font-medium text-[#F1F5F9]">Detection immediate avant reintegration</span>
               <p className="text-xs text-[#94A3B8]">
-                Alerte en temps reel intrabar M3 et M5 des qu'il y a cassure + CISD, sans attendre le retour dans le range.
+                Alerte en temps reel intrabar M3 et M2 des qu'il y a cassure + CHoCH, sans attendre le retour dans le range.
               </p>
             </div>
             <button
@@ -257,7 +257,7 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
                 onChange={(e) => setDailyBiasMode(e.target.value as HtfBiasMode)}
                 className="bg-[#0B0F17] border border-[#1E293B] rounded-md px-3 py-2 text-sm text-[#F1F5F9] focus:outline-none focus:border-[#2563EB]"
               >
-                <option value="AUTO">Auto CISD D1 ({snapshot.htfBias.daily})</option>
+                <option value="AUTO">Auto CHoCH D1 ({snapshot.htfBias.daily})</option>
                 <option value="BULLISH">Manuel : HAUSSIER</option>
                 <option value="BEARISH">Manuel : BAISSIER</option>
               </select>
@@ -270,7 +270,7 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
                 onChange={(e) => setH4BiasMode(e.target.value as HtfBiasMode)}
                 className="bg-[#0B0F17] border border-[#1E293B] rounded-md px-3 py-2 text-sm text-[#F1F5F9] focus:outline-none focus:border-[#2563EB]"
               >
-                <option value="AUTO">Auto CISD H4 ({snapshot.htfBias.h4})</option>
+                <option value="AUTO">Auto CHoCH H4 ({snapshot.htfBias.h4})</option>
                 <option value="BULLISH">Manuel : HAUSSIER</option>
                 <option value="BEARISH">Manuel : BAISSIER</option>
               </select>
@@ -281,7 +281,7 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
             <div>
               <span className="text-sm font-medium text-[#F1F5F9]">Classement automatique Daily / H4</span>
               <p className="text-xs text-[#94A3B8] mt-1">
-                Daily et H4 alignes dans le sens du CISD = HAUTE PROBABILITE. S'ils divergent ou sont contre le CISD, le signal reste alerte dans la Killzone avec son classement MEDIUM ou CONTRE-TENDANCE.
+                Daily et H4 alignes dans le sens du CHoCH = HAUTE PROBABILITE. S'ils divergent ou sont contre le CHoCH, le signal reste alerte dans la Killzone avec son classement MEDIUM ou CONTRE-TENDANCE.
               </p>
             </div>
             <span className="px-3 py-1.5 text-xs font-semibold rounded-md border border-[#10B981]/50 bg-[#10B981]/15 text-[#10B981] shrink-0">AUTO</span>
@@ -427,7 +427,7 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
         <div className="border-t border-[#1E293B] divide-y divide-[#1E293B]/60 text-xs">
           <div className="py-3 flex items-center justify-between gap-4">
             <span className="text-[#94A3B8]">Symbole affiche</span>
-            <span className="font-mono font-medium text-[#F1F5F9]">{config.symbol} · M3 / M5</span>
+            <span className="font-mono font-medium text-[#F1F5F9]">{config.symbol} · M2 / M3</span>
           </div>
           <div className="py-3 flex items-center justify-between gap-4">
             <span className="text-[#94A3B8]">Source de marche</span>
@@ -442,7 +442,7 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
           <div className="py-3 flex items-center justify-between gap-4">
             <span className="text-[#94A3B8]">Etat du flux</span>
             <span className={feedStatus.connected ? 'text-[#10B981] font-medium' : 'text-[#EF4444]'}>
-              {feedStatus.connected ? `Connecte · ${feedStatus.barCount} bougies M3 (M5 independant)` : feedStatus.lastError ?? 'Deconnecte'}
+              {feedStatus.connected ? `Connecte · ${feedStatus.barCount} bougies M3 (M2 independant)` : feedStatus.lastError ?? 'Deconnecte'}
             </span>
           </div>
           <div className="py-3 flex items-center justify-between gap-4">

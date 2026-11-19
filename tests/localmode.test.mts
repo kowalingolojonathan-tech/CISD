@@ -58,23 +58,21 @@ const afterClose = frames.length;
 hub.engines['XAU/USD'].setFeedStatus(true, Date.now(), null);
 ok(frames.length === afterClose && es.readyState === 2, 'no frames after close()');
 
-// ---- hub wires the alert hook (what triggers the on-device notification) ----
+// ---- hub wires the alert hook for a valid M3 CHoCH alert ----
 Date.now = () => Date.UTC(2026, 10, 17, 14, 30, 0);
-const M3 = 180_000; const t0 = (h: number, m: number) => Date.UTC(2026, 10, 17, h, m);
-const bars: Candle[] = [];
-const push = (time: number, o: number, h: number, l: number, c: number) => bars.push({ time, open: o, high: h, low: l, close: c, volume: 0, confirmed: true });
-for (let ts = t0(5, 0); ts < t0(14, 12); ts += M3) {
-  const base = 1.0900 + ((ts / M3) % 7) * 0.0001; const up = (ts / M3) % 2 === 0;
-  const spike = new Date(ts).getUTCHours() === 8 && new Date(ts).getUTCMinutes() === 30;
-  push(ts, up ? base : base + 0.0003, Math.max(base, base + 0.0003) + (spike ? 0.0047 : 0.0002), Math.min(base, base + 0.0003) - 0.0002, up ? base + 0.0003 : base);
-}
-push(t0(14, 12), 1.0905, 1.0931, 1.0904, 1.0930); push(t0(14, 15), 1.0930, 1.0931, 1.0924, 1.0925);
-push(t0(14, 18), 1.0925, 1.0926, 1.0919, 1.0920); push(t0(14, 21), 1.0920, 1.0958, 1.0919, 1.0954);
-
+const now = Date.now();
 const fired: Array<[string, number]> = [];
 saved = {}; const hub4 = createLocalHub((a, n) => fired.push([a.symbol, n]), memory);
-hub4.engines['EUR/USD'].loadHistory(bars, null);
-await hub4.engines['EUR/USD'].ingestLiveBar({ time: t0(14, 24), open: 1.0954, high: 1.0955, low: 1.0913, close: 1.0915, volume: 0, confirmed: false }, false);
-ok(fired.length === 1 && fired[0][0] === 'EUR/USD' && fired[0][1] === 1, 'live signal calls the on-device notification hook exactly once');
+const engine = hub4.engines['EUR/USD'] as any;
+const sweep = { id: 'sw_live', levelId: 'lvl_live', sessionId: 'london', sessionName: 'London', shortName: 'L', isHigh: true, level: 1.0950, createdAt: now - 60 * 60_000, sweptAt: now - 60_000, sweptBarIndex: 1, sweepPrice: 1.0960 };
+engine.kzEngine.getSweepEvents = () => [sweep];
+const alert = engine.evaluateConfluence(
+  { time: now, open: 1.0960, high: 1.0962, low: 1.0940, close: 1.0955, confirmed: true },
+  3,
+  { id: 'choch_live', barIndex: 3, time: now, direction: 'bearish', originLevel: 1.0940, originBarIndex: 2, noiseRatio: 0, toleranceUsed: 0, strongSweep: false, wickedSwingLevel: null, barsSinceSwing: null, closePrice: 1.0955 },
+  sweep, null, true, 'M3'
+);
+await engine.recordAndDispatchAlert(alert, true);
+ok(fired.length === 1 && fired[0][0] === 'EUR/USD' && fired[0][1] === 1, 'valid live CHoCH calls the on-device notification hook exactly once');
 console.log(checks.join('\n'));
 process.exit(process.exitCode ?? 0);

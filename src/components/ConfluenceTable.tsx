@@ -47,6 +47,7 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
 }) => {
   const [filter, setFilter] = useState<'ALL' | 'PENDING' | 'HIGH' | 'BULLISH' | 'BEARISH'>('ALL');
   const [viewMode, setViewMode] = useState<'confluences' | 'sweeps'>('confluences');
+  const [historyDays, setHistoryDays] = useState<3 | 4>(3);
 
   const pendingCount = useMemo(
     () => alerts.filter((a) => a.ackStatus === 'pending').length,
@@ -54,11 +55,13 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
   );
 
   const filteredAlerts = useMemo(() => {
-    if (filter === 'ALL') return alerts;
-    if (filter === 'PENDING') return alerts.filter((a) => a.ackStatus === 'pending');
-    if (filter === 'HIGH') return alerts.filter((a) => a.probability === 'HIGH');
-    return alerts.filter((a) => a.direction === filter);
-  }, [alerts, filter]);
+    const cutoff = Date.now() - historyDays * 24 * 60 * 60 * 1000;
+    const recent = alerts.filter((a) => a.timestamp >= cutoff);
+    if (filter === 'ALL') return recent;
+    if (filter === 'PENDING') return recent.filter((a) => a.ackStatus === 'pending');
+    if (filter === 'HIGH') return recent.filter((a) => a.probability === 'HIGH');
+    return recent.filter((a) => a.direction === filter);
+  }, [alerts, filter, historyDays]);
 
   return (
     <div className="bg-[#111827] border border-[#1E293B] rounded-lg overflow-hidden">
@@ -94,6 +97,14 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
         </div>
 
         {viewMode === 'confluences' && (
+          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1 bg-[#0B0F17] border border-[#1E293B] rounded-md p-0.5">
+            {([3, 4] as const).map((days) => (
+              <button key={days} type="button" onClick={() => setHistoryDays(days)} className={`px-2.5 py-1 text-xs font-medium rounded transition-colors ${historyDays === days ? 'bg-[#1E293B] text-[#F8FAFC]' : 'text-[#64748B] hover:text-[#CBD5E1]'}`}>
+                {days} jours
+              </button>
+            ))}
+          </div>
           <div className="flex flex-wrap items-center gap-1 bg-[#0B0F17] border border-[#1E293B] rounded-md p-0.5">
             {(['ALL', 'PENDING', 'HIGH', 'BULLISH', 'BEARISH'] as const).map((f) => (
               <button
@@ -120,6 +131,7 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
               </button>
             ))}
           </div>
+          </div>
         )}
       </div>
 
@@ -127,7 +139,7 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
         filteredAlerts.length === 0 ? (
           <div className="px-6 py-10 text-center">
             <p className="text-sm text-[#94A3B8]">
-              Aucun signal Killzone + CISD M3/M5 pour ce filtre.
+              Aucun signal Killzone + CHoCH M2/M3 pour ce filtre.
             </p>
             <p className="mt-1 text-xs text-[#64748B]">
               Les signaux historiques sont conserves dans ce journal. Les alertes Telegram sont repetees jusqu’a « J’ai vu » (10 envois maximum).
@@ -152,7 +164,7 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
                   <th className="py-2.5 px-4 whitespace-nowrap">Session Active</th>
                   <th className="py-2.5 px-4 whitespace-nowrap">Niveau Casse</th>
                   <th className="py-2.5 px-4 whitespace-nowrap">Position Prix</th>
-                  <th className="py-2.5 px-4 text-right whitespace-nowrap">Origine CISD</th>
+                  <th className="py-2.5 px-4 text-right whitespace-nowrap">Niveau CHoCH</th>
                   <th className="py-2.5 px-4 whitespace-nowrap">Validation (J'ai vu)</th>
                   <th className="py-2.5 px-4 whitespace-nowrap">Statut Webhook</th>
                 </tr>
@@ -211,7 +223,7 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
                         )}
                       </td>
                       <td className="py-2.5 px-4 text-right font-mono tabular-nums text-[#F1F5F9] whitespace-nowrap">
-                        {formatSymbolPrice(a.cisd.originLevel, a.symbol)}
+                        {formatSymbolPrice(a.choch.originLevel, a.symbol)}
                       </td>
                       <td className="py-2.5 px-4 whitespace-nowrap">
                         {a.ackStatus === 'pending' ? (

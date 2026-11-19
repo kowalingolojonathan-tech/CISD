@@ -142,7 +142,7 @@ export function showSetup(reason?: string): void {
   card.style.cssText = 'width:100%;max-width:420px;display:flex;flex-direction:column;gap:12px';
 
   const h = document.createElement('h1');
-  h.textContent = 'Killzone CISD Desk';
+  h.textContent = 'Killzone CHoCH Desk';
   h.style.cssText = 'font-size:20px;font-weight:700;margin:0';
 
   const p = document.createElement('p');
