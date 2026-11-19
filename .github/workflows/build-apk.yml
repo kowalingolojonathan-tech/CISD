@@ -34,7 +34,7 @@ jobs:
           distribution: temurin
           java-version: 21
 
-      - name: Detect Firebase config (needed for push notifications)
+      - name: Detect optional Firebase config (only for server mode push)
         id: firebase
         env:
           GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
@@ -43,7 +43,7 @@ jobs:
             echo "enabled=true" >> "$GITHUB_OUTPUT"
           else
             echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Secret GOOGLE_SERVICES_JSON absent: l'APK sera construit SANS notifications push."
+            echo "Pas de GOOGLE_SERVICES_JSON: APK autonome (notifications locales), sans push Firebase."
           fi
 
       - name: Install dependencies

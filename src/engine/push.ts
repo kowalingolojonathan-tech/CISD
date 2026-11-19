@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import { formatSymbolPrice, type ConfluenceAlert } from './types.ts';
+import { buildAlertNotification } from './alertText.ts';
+import type { ConfluenceAlert } from './types.ts';
 
 /**
  * Native push (Firebase Cloud Messaging HTTP v1) for the Android APK.
@@ -305,21 +306,11 @@ async function broadcast(msg: PushMessage): Promise<PushResult> {
 /* ------------------------------ public helpers ----------------------------- */
 
 export function buildAlertPushMessage(alert: ConfluenceAlert, reminderNumber = 1): PushMessage {
-  const fmt = (p: number) => formatSymbolPrice(p, alert.symbol);
-  const bullish = alert.direction === 'BULLISH';
-  const arrow = bullish ? '\u25B2' : '\u25BC';
-  const dir = bullish ? 'HAUSSIER' : 'BAISSIER';
-  const star = alert.probability === 'HIGH' ? ' \u2605 HAUTE PROBA' : '';
-  const level = `${alert.kzSweep.shortName}.${alert.kzSweep.isHigh ? 'H' : 'L'}`;
-  const prefix = reminderNumber > 1 ? `Rappel #${reminderNumber} \u00B7 ` : '';
-
+  const n = buildAlertNotification(alert, reminderNumber);
   return {
-    title: `${prefix}${arrow} ${alert.symbol} \u00B7 ${dir}${star}`,
-    body:
-      `${alert.activeKillzoneName ?? 'Hors killzone'} \u00B7 cassure ${alert.kzSweep.sessionName} ${level} ` +
-      `@ ${fmt(alert.kzSweep.level)} \u00B7 prix ${fmt(alert.cisd.closePrice)}`,
-    // Same tag per alert: reminders replace the previous notification instead of stacking.
-    tag: alert.dedupeKey.replace(/[^a-zA-Z0-9_-]/g, '_'),
+    title: n.title,
+    body: n.body,
+    tag: n.tag,
     data: {
       type: 'confluence',
       alertId: alert.id,

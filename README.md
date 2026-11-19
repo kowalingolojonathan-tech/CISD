@@ -22,50 +22,42 @@ npm test         # tests du moteur (DST, pipeline de signaux, flux de marché, p
 | `npm start` lançait Vite en dev | Mauvais mode en production | `NODE_ENV=production`, `tsx` en dépendance |
 | API ouverte à tous | Quiconque pouvait changer le token Telegram ou spammer le webhook TradingView | `ACCESS_TOKEN` optionnel + CORS |
 
-## Notifications push instantanées (APK)
+## Application Android autonome (sans serveur)
 
-Le push part **en parallèle** de Telegram, sans attendre sa réponse (testé : push émis ~300 ms avant
-la réponse de Telegram). Mécanisme : Firebase Cloud Messaging en priorité haute, qui réveille le
-téléphone même en veille profonde (Doze) et application fermée.
+L'APK embarque le moteur : il récupère les prix, détecte les signaux et **notifie directement
+sur le téléphone**, sans hébergement ni Firebase. Telegram reste possible (token et chat ID dans
+les réglages de l'app).
 
-### 1. Firebase (gratuit, ~5 min)
-1. https://console.firebase.google.com → **Ajouter un projet**.
-2. Dans le projet → **Ajouter une application Android**, nom de package : `com.cisd.killzonedesk`.
-3. Télécharger **`google-services.json`**.
-4. ⚙ Paramètres du projet → **Comptes de service** → **Générer une nouvelle clé privée** → fichier JSON.
+1. Onglet **Actions → Build Android APK → Run workflow** (ou `git push` sur `main`).
+2. Installer l'APK depuis **Releases → « APK le plus récent »**.
+3. Au premier lancement : accepter les **notifications** et la demande
+   « ignorer l'optimisation de batterie ».
+4. Une notification permanente « Surveillance active » apparaît : c'est le service qui garde le
+   moteur en vie écran éteint. Ne la désactivez pas.
 
-### 2. GitHub (dépôt → Settings → Secrets and variables → Actions)
-- Secret **`GOOGLE_SERVICES_JSON`** : contenu complet du `google-services.json`.
-- *(optionnel)* Variable **`SERVER_URL`** : adresse de votre serveur, pré-remplie dans l'APK.
+Le bouton ⚙ (en bas à gauche) permet de passer en **mode serveur** (voir plus bas).
 
-### 3. Serveur
-Variables d'environnement :
-```
-FCM_SERVICE_ACCOUNT_BASE64   # base64 -w0 service-account.json
-ACCESS_TOKEN                 # recommandé dès que le serveur est sur Internet
-```
+### Limites à connaître
+- Le moteur tourne **sur le téléphone** : si Android tue l'app (économiseur de batterie agressif,
+  « fermeture des apps en arrière-plan » sur Xiaomi/Huawei/Oppo/Samsung…), la détection s'arrête.
+  Désactivez l'optimisation de batterie pour l'app et verrouillez-la dans les apps récentes.
+- Pas de connexion internet = pas de signaux.
+- Mode non validé sur un vrai appareil au moment de l'écriture : les tests couvrent le moteur,
+  l'API locale et les notifications côté code, pas le comportement d'Android en veille prolongée.
 
-### 4. Construire l'APK
-Onglet **Actions → Build Android APK → Run workflow** (ou simple `git push` sur `main`).
-L'APK est publié dans **Releases → « APK le plus récent »** et dans les artefacts du run.
+## Mode serveur (optionnel, plus fiable en veille profonde)
 
-### 5. Installer
-Télécharger l'APK sur le téléphone, l'installer (autoriser les sources inconnues), ouvrir l'app,
-saisir l'adresse du serveur (et le jeton), **accepter les notifications**.
-Le bouton « Tester » des intégrations envoie un test Telegram **et** un push.
+Un serveur qui tourne en continu détecte les signaux même téléphone éteint ou app tuée, et peut
+envoyer un push Firebase instantané (priorité haute, passe le mode Doze).
 
-## ⚠️ Le serveur doit tourner en continu
-
-Le moteur tourne en tâche de fond sur le serveur : s'il dort, **aucune alerte ne part**, ni push ni Telegram.
-- Cloud Run : `--min-instances=1 --no-cpu-throttling`.
-- Les hébergements gratuits qui s'endorment ne conviennent pas.
-
-Sur certains Android (Xiaomi, Huawei, Oppo…), désactiver l'optimisation de batterie pour l'app
-et autoriser le démarrage automatique, sinon le système peut retarder les notifications.
+Variables du serveur : `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `ACCESS_TOKEN` (recommandé),
+`FCM_SERVICE_ACCOUNT_BASE64` (pour le push).
+Côté GitHub : secret `GOOGLE_SERVICES_JSON` (fichier Firebase de l'app Android
+`com.cisd.killzonedesk`) pour que l'APK active le push.
+Un `Dockerfile` est fourni. Sur Cloud Run : `--min-instances=1 --no-cpu-throttling`.
 
 ## Notes
 
 - L'APK est signé avec une clé de debug **commitée** (`android-signing/`) : pratique pour installer
   les mises à jour par-dessus, suffisant pour un usage personnel, **inadapté au Play Store**.
-- `.push-tokens.json` (appareils enregistrés) est local au serveur ; sur un hébergement à disque
-  éphémère, l'app se ré-enregistre à chaque lancement.
+- `.push-tokens.json` (appareils enregistrés, mode serveur) est local au serveur.

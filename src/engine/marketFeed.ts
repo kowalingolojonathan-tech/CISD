@@ -321,8 +321,8 @@ async function fetchYahooHtfHistory(
 export class MarketLiveFeed {
   private engine: TradingConfluenceEngine;
   private symbol: SupportedSymbol;
-  private tickTimer: NodeJS.Timeout | null = null;
-  private historySyncTimer: NodeJS.Timeout | null = null;
+  private tickTimer: ReturnType<typeof setInterval> | null = null;
+  private historySyncTimer: ReturnType<typeof setInterval> | null = null;
   private currentLiveBar: Candle | null = null;
   private lastKnownClose = 0;
   private isRunning = false;
