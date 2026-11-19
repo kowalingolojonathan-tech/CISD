@@ -23,7 +23,7 @@ function makeEngine(): TradingConfluenceEngine {
     symbol: 'XAU/USD', marketSource: 'yahoo_swissquote', twelveDataApiKey: '', tzMode: 'Auto (DST)',
     tolerance: 0.7, swingPeriod: 12, expiryBars: 100, liquidityLookback: 10, kzLookbackBars: 10,
     requireActiveKillzone: true, triggerOnIntrabar: true, dailyBiasMode: 'AUTO', h4BiasMode: 'AUTO',
-    highProbabilityOnly: false, telegramBotToken: '', telegramChatId: '', customWebhookUrl: '',
+    highProbabilityOnly: false, enableM5Cisd: true, telegramBotToken: '', telegramChatId: '', customWebhookUrl: '',
     alertsEnabled: true, repeatAlertIntervalSec: 30, liveSetupMaxMinutes: 20,
   };
   return new TradingConfluenceEngine(cfg);

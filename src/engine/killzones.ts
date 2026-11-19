@@ -87,6 +87,15 @@ export function getNyDateTime(timestampMs: number, tzMode: TimezoneMode): NyDate
   };
 }
 
+/** Calendar-day distance in New York time, independent of DST transitions. */
+export function nyCalendarDayDistance(earlierMs: number, laterMs: number, tzMode: TimezoneMode): number {
+  const earlier = getNyDateTime(earlierMs, tzMode).dayKey.split('-').map(Number);
+  const later = getNyDateTime(laterMs, tzMode).dayKey.split('-').map(Number);
+  const earlierUtc = Date.UTC(earlier[0], earlier[1] - 1, earlier[2]);
+  const laterUtc = Date.UTC(later[0], later[1] - 1, later[2]);
+  return Math.round((laterUtc - earlierUtc) / 86_400_000);
+}
+
 export function parseSessionRange(range: string): { startMins: number; endMins: number } {
   const [sStart, sEnd] = range.split('-');
   const parseHHMM = (hhmm: string) => {
@@ -347,6 +356,7 @@ export class KillzonesEngine {
           shortName: lvl.shortName,
           isHigh: lvl.isHigh,
           level: lvl.level,
+          createdAt: lvl.createdAt,
           sweptAt: bar.time,
           sweptBarIndex: barIndex,
           sweepPrice: lvl.isHigh ? bar.high : bar.low,
@@ -389,6 +399,7 @@ export class KillzonesEngine {
           shortName: lvl.shortName,
           isHigh: lvl.isHigh,
           level: lvl.level,
+          createdAt: lvl.createdAt,
           sweptAt: liveBar.time,
           sweptBarIndex: liveBarIndex,
           sweepPrice: lvl.isHigh ? liveBar.high : liveBar.low,

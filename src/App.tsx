@@ -235,7 +235,7 @@ export default function App() {
         });
         const data = (await res.json()) as { ok: boolean; snapshot?: EngineSnapshot };
         if (data.snapshot) setSnapshot(data.snapshot);
-        showToast(true, "Alerte validee (« J'ai vu »). Les rappels Telegram sont arretes.");
+        showToast(true, "Alerte marquee comme vue (« J'ai vu »).");
       } catch (err) {
         showToast(false, err instanceof Error ? err.message : 'Erreur validation');
       } finally {
@@ -486,7 +486,7 @@ export default function App() {
                   className="py-2.5 flex flex-wrap items-center justify-between gap-4 text-xs"
                 >
                   <div className="flex flex-wrap items-center gap-3">
-                    <span className="font-semibold text-[#F8FAFC]">{a.symbol} M3</span>
+                    <span className="font-semibold text-[#F8FAFC]">{a.symbol} {a.timeframe ?? 'M3'}</span>
                     <span
                       className={`font-semibold ${
                         a.direction === 'BULLISH' ? 'text-[#10B981]' : 'text-[#EF4444]'
@@ -495,16 +495,14 @@ export default function App() {
                       {a.direction === 'BULLISH' ? '▲ HAUSSIER' : '▼ BAISSIER'}
                     </span>
                     <span className="text-[#CBD5E1]">
-                      Cassure {a.kzSweep.sessionName} ({a.kzSweep.shortName}.
-                      {a.kzSweep.isHigh ? 'H' : 'L'}{' '}
-                      <span className="font-mono tabular-nums">
-                        {formatSymbolPrice(a.kzSweep.level, a.symbol)}
-                      </span>
-                      )
+                      {(a.kzSweeps?.length ? a.kzSweeps : [a.kzSweep]).map((sw) => (
+                        <span key={sw.id} className="mr-2">
+                          {sw.shortName}.{sw.isHigh ? 'H' : 'L'} <span className="font-mono tabular-nums">{formatSymbolPrice(sw.level, a.symbol)}</span>
+                        </span>
+                      ))}
                     </span>
-                    <span className="font-mono tabular-nums text-[#F59E0B]">
-                      Rappel Telegram #{a.reminderCount} envoye (repete toutes les{' '}
-                      {snapshot?.config.repeatAlertIntervalSec ?? 30}s jusqu'a validation)
+                    <span className="font-mono tabular-nums text-[#94A3B8]">
+                      Telegram : {a.reminderCount}/10 envois · rappel toutes les {snapshot.config.repeatAlertIntervalSec}s
                     </span>
                   </div>
 
@@ -525,7 +523,7 @@ export default function App() {
         {loading && !snapshot ? (
           <div className="bg-[#111827] border border-[#1E293B] rounded-lg p-10 text-center">
             <p className="text-sm text-[#94A3B8]">
-              Connexion aux donnees reelles {selectedSymbol} M3 et calcul des sessions Killzones...
+              Connexion aux donnees reelles {selectedSymbol} M3/M5 et calcul des sessions Killzones...
             </p>
           </div>
         ) : error && !snapshot ? (
@@ -540,7 +538,7 @@ export default function App() {
                 <div className="text-xs text-[#94A3B8] flex items-center gap-1.5">
                   <span>{selectedSymbol} Spot</span>
                   <span aria-hidden="true">·</span>
-                  <span>M3 Reel</span>
+                  <span>M3 / M5 Reel</span>
                 </div>
                 <div className="mt-1.5 flex items-baseline justify-between gap-2">
                   <span className="text-xl font-semibold font-mono tabular-nums text-[#F8FAFC]">

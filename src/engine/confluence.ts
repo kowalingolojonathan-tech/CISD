@@ -1,5 +1,5 @@
 import { CisdEngine } from './cisd.ts';
-import { computeSessionCountdown, getNyDateTime, KillzonesEngine } from './killzones.ts';
+import { computeSessionCountdown, getNyDateTime, KillzonesEngine, nyCalendarDayDistance } from './killzones.ts';
 import { dispatchAlertWebhook } from './telegram.ts';
 import {
   getPriceDecimals,
@@ -16,6 +16,7 @@ import {
 } from './types.ts';
 
 const LIVE_ALERT_FRESHNESS_MS = 6 * 60 * 1000; // Signal must be <= 6 min old to qualify as "en cours"
+const MAX_ALERT_DELIVERIES = 10; // Initial message + up to 9 reminders until acknowledgement
 
 interface PersistedAckState {
   ackStatus: AlertAckStatus;
@@ -45,6 +46,9 @@ export class TradingConfluenceEngine {
   private config: EngineConfig;
   private kzEngine: KillzonesEngine;
   private cisdEngine: CisdEngine;
+  private cisdM5Engine: CisdEngine;
+  private confirmedM5Bars: Candle[] = [];
+  private liveM5Bar: Candle | null = null;
 
   // Higher-timeframe (Daily & H4) CISD bias tracking
   private d1Bars: Candle[] = [];
@@ -62,7 +66,6 @@ export class TradingConfluenceEngine {
   private lastKzLowSweep: KillzoneSweepEvent | null = null;
   private consumedSweepKeys = new Set<string>();
   private persistedAlertStates = new Map<string, PersistedAckState>();
-  private isReminderTickRunning = false;
 
   private feedConnected = false;
   private lastTickAt: number | null = null;
@@ -79,12 +82,15 @@ export class TradingConfluenceEngine {
       expiryBars: this.config.expiryBars,
       liquidityLookback: this.config.liquidityLookback,
     });
+    this.cisdM5Engine = new CisdEngine({
+      tolerance: this.config.tolerance,
+      swingPeriod: this.config.swingPeriod,
+      expiryBars: this.config.expiryBars,
+      liquidityLookback: this.config.liquidityLookback,
+    });
   }
 
-  /**
-   * Registers a fire-and-forget hook called the instant a live alert (or a reminder) is due,
-   * BEFORE the Telegram round-trip is awaited. Used for native push (FCM).
-   */
+  /** Registers a fire-and-forget hook for the single notification sent for each new live setup. */
   public setAlertNotifier(fn: ((alert: ConfluenceAlert, reminderNumber: number) => void) | null) {
     this.alertNotifier = fn;
   }
@@ -186,67 +192,66 @@ export class TradingConfluenceEngine {
   }
 
   /**
-   * Called periodically (every ~5s) to re-send Telegram reminders for unacknowledged live alerts
-   * while they are still active ("en cours"). Stops when validated or expired.
+   * Re-sends Telegram reminders for pending live alerts at the configured interval.
+   * The initial delivery plus reminders are capped at 10; acknowledgement stops them immediately.
    */
   public async processPendingReminders() {
-    if (this.isReminderTickRunning) return;
-    this.isReminderTickRunning = true;
-    try {
-      const now = Date.now();
-      const maxWindowMs = Math.max(5, this.config.liveSetupMaxMinutes) * 60 * 1000;
-      const intervalMs = Math.max(10, this.config.repeatAlertIntervalSec) * 1000;
-      const activeKzNow = this.kzEngine.getActiveSessionAt(now);
-      let changed = false;
+    const now = Date.now();
+    const maxWindowMs = Math.max(5, this.config.liveSetupMaxMinutes) * 60 * 1000;
+    const nowNyDay = getNyDateTime(now, this.config.tzMode).dayKey;
+    let changed = false;
 
-      for (const alert of this.confluenceAlerts) {
-        if (alert.ackStatus !== 'pending') continue;
+    for (const alert of this.confluenceAlerts) {
+      if (alert.ackStatus !== 'pending') continue;
+      const elapsed = now - alert.timestamp;
+      const nyDayExpired = getNyDateTime(alert.timestamp, this.config.tzMode).dayKey !== nowNyDay;
+      if (elapsed > maxWindowMs || nyDayExpired) {
+        alert.ackStatus = 'expired';
+        alert.nextReminderAt = null;
+        alert.webhookDetail = nyDayExpired
+          ? 'Fin de la journee de trading New York — alerte conservee dans historique'
+          : 'Fenetre du setup expiree — alerte conservee dans historique';
+        this.saveAckState(alert);
+        changed = true;
+        continue;
+      }
 
-        const elapsed = now - alert.timestamp;
-        if (elapsed > maxWindowMs || (this.config.requireActiveKillzone && !activeKzNow)) {
-          alert.ackStatus = 'expired';
+      if (alert.reminderCount >= MAX_ALERT_DELIVERIES) {
+        if (alert.nextReminderAt !== null) {
           alert.nextReminderAt = null;
-          alert.webhookDetail = !activeKzNow
-            ? 'Killzone terminee — rappel arrete'
-            : 'Fenetre en cours expiree';
-          this.saveAckState(alert);
-          changed = true;
-          continue;
-        }
-
-        if (!this.config.alertsEnabled) {
-          continue;
-        }
-
-        const lastSent = alert.lastReminderAt ?? alert.timestamp;
-        if (now - lastSent >= intervalMs) {
-          alert.reminderCount += 1;
-          alert.lastReminderAt = now;
-          alert.nextReminderAt = now + intervalMs;
-          this.saveAckState(alert);
-          this.emit();
-          this.notify(alert, alert.reminderCount);
-
-          const res = await dispatchAlertWebhook(alert, {
-            telegramBotToken: this.config.telegramBotToken,
-            telegramChatId: this.config.telegramChatId,
-            customWebhookUrl: this.config.customWebhookUrl,
-            reminderNumber: alert.reminderCount,
-            includeAckButton: true,
-          });
-          alert.webhookStatus = res.status;
-          alert.webhookDetail = res.detail;
+          alert.webhookDetail = `Limite de ${MAX_ALERT_DELIVERIES} notifications atteinte — en attente de validation`;
           this.saveAckState(alert);
           changed = true;
         }
+        continue;
       }
 
-      if (changed) {
-        this.emit();
-      }
-    } finally {
-      this.isReminderTickRunning = false;
+      if (alert.nextReminderAt === null || now < alert.nextReminderAt) continue;
+
+      const reminderNumber = alert.reminderCount + 1;
+      const intervalMs = Math.max(10, this.config.repeatAlertIntervalSec) * 1000;
+      alert.reminderCount = reminderNumber;
+      alert.lastReminderAt = now;
+      alert.nextReminderAt = reminderNumber < MAX_ALERT_DELIVERIES ? now + intervalMs : null;
+      alert.webhookStatus = 'pending';
+      alert.webhookDetail = `Envoi du rappel #${reminderNumber}`;
+      this.saveAckState(alert);
+      this.emit();
+
+      const result = await dispatchAlertWebhook(alert, {
+        telegramBotToken: this.config.telegramBotToken,
+        telegramChatId: this.config.telegramChatId,
+        customWebhookUrl: this.config.customWebhookUrl,
+        reminderNumber,
+        includeAckButton: true,
+      });
+      alert.webhookStatus = result.status;
+      alert.webhookDetail = result.detail;
+      this.saveAckState(alert);
+      this.emit();
     }
+
+    if (changed) this.emit();
   }
 
   private saveAckState(alert: ConfluenceAlert) {
@@ -428,6 +433,76 @@ export class TradingConfluenceEngine {
     this.emit();
   }
 
+  /** Loads real M5 candles built from 1-minute source data. Historical M5 setups never notify. */
+  public loadM5History(bars: Candle[], liveBar: Candle | null = null) {
+    this.cisdM5Engine.reset({
+      tolerance: this.config.tolerance,
+      swingPeriod: this.config.swingPeriod,
+      expiryBars: this.config.expiryBars,
+      liquidityLookback: this.config.liquidityLookback,
+    });
+    this.confirmedM5Bars = [];
+    this.liveM5Bar = liveBar;
+    if (!this.config.enableM5Cisd) return;
+    for (const bar of bars) {
+      this.confirmedM5Bars.push({ ...bar, confirmed: true });
+      const signal = this.cisdM5Engine.processConfirmedBar(bar);
+      if (signal) {
+        const alert = this.evaluateConfluence(
+          bar, this.confirmedM5Bars.length - 1, signal,
+          this.lastKzHighSweep, this.lastKzLowSweep, false, 'M5'
+        );
+        if (alert) void this.recordAndDispatchAlert(alert, false);
+      }
+    }
+    this.emit();
+  }
+
+  /** Updates the independent M5 stream; it is never fabricated from M3 candles. */
+  public async ingestM5Bar(bar: Candle, isConfirmedClose: boolean) {
+    if (!this.config.enableM5Cisd) return;
+    const last = this.confirmedM5Bars[this.confirmedM5Bars.length - 1];
+    if (last && bar.time < last.time) return;
+    if (last && bar.time === last.time) return;
+    if (isConfirmedClose) {
+      if (this.liveM5Bar?.time === bar.time) this.liveM5Bar = null;
+      this.confirmedM5Bars.push({ ...bar, confirmed: true });
+      const signal = this.cisdM5Engine.processConfirmedBar(bar);
+      if (signal) {
+        const alert = this.evaluateConfluence(
+          bar, this.confirmedM5Bars.length - 1, signal,
+          this.lastKzHighSweep, this.lastKzLowSweep, false, 'M5'
+        );
+        if (alert) await this.recordAndDispatchAlert(alert, true);
+      }
+    } else {
+      if (this.liveM5Bar && bar.time > this.liveM5Bar.time) {
+        const closed = { ...this.liveM5Bar, confirmed: true };
+        this.confirmedM5Bars.push(closed);
+        const signal = this.cisdM5Engine.processConfirmedBar(closed);
+        if (signal) {
+          const alert = this.evaluateConfluence(
+            closed, this.confirmedM5Bars.length - 1, signal,
+            this.lastKzHighSweep, this.lastKzLowSweep, false, 'M5'
+          );
+          if (alert) await this.recordAndDispatchAlert(alert, true);
+        }
+      }
+      this.liveM5Bar = bar;
+      if (this.config.triggerOnIntrabar) {
+        const signal = this.cisdM5Engine.previewLiveBar(bar);
+        if (signal) {
+          const alert = this.evaluateConfluence(
+            bar, this.confirmedM5Bars.length, signal,
+            this.lastKzHighSweep, this.lastKzLowSweep, true, 'M5'
+          );
+          if (alert) await this.recordAndDispatchAlert(alert, true);
+        }
+      }
+    }
+    this.emit();
+  }
+
   public async updateConfig(patch: Partial<EngineConfig>) {
     const needsRecompute =
       (patch.tzMode !== undefined && patch.tzMode !== this.config.tzMode) ||
@@ -439,7 +514,8 @@ export class TradingConfluenceEngine {
       (patch.requireActiveKillzone !== undefined &&
         patch.requireActiveKillzone !== this.config.requireActiveKillzone) ||
       (patch.dailyBiasMode !== undefined && patch.dailyBiasMode !== this.config.dailyBiasMode) ||
-      (patch.h4BiasMode !== undefined && patch.h4BiasMode !== this.config.h4BiasMode);
+      (patch.h4BiasMode !== undefined && patch.h4BiasMode !== this.config.h4BiasMode) ||
+      (patch.enableM5Cisd !== undefined && patch.enableM5Cisd !== this.config.enableM5Cisd);
 
     this.config = { ...this.config, ...patch };
 
@@ -451,6 +527,7 @@ export class TradingConfluenceEngine {
       const existingBars = [...this.confirmedBars];
       const existingLive = this.liveBar ? { ...this.liveBar } : null;
       this.loadHistory(existingBars, existingLive);
+      if (this.confirmedM5Bars.length > 0) this.loadM5History([...this.confirmedM5Bars], this.liveM5Bar);
     } else {
       this.emit();
     }
@@ -510,7 +587,9 @@ export class TradingConfluenceEngine {
       liveCisd,
       effectiveHighSweep,
       effectiveLowSweep,
-      true
+      true,
+      'M3',
+      liveSweeps
     );
 
     if (confluence) {
@@ -531,9 +610,10 @@ export class TradingConfluenceEngine {
       confluence.webhookDetail = saved.webhookDetail;
     }
 
+    if (this.confluenceAlerts.some((a) => a.dedupeKey === confluence.dedupeKey)) return;
     this.confluenceAlerts.unshift(confluence);
-    if (this.confluenceAlerts.length > 100) {
-      this.confluenceAlerts.length = 100;
+    if (this.confluenceAlerts.length > 300) {
+      this.confluenceAlerts.length = 300;
     }
 
     if (saved) {
@@ -543,8 +623,6 @@ export class TradingConfluenceEngine {
     const now = Date.now();
     const ageMs = now - confluence.timestamp;
     const isFreshLiveSetup = ageMs <= LIVE_ALERT_FRESHNESS_MS;
-    const activeKzNow = this.kzEngine.getActiveSessionAt(now);
-
     if (!dispatchLiveWebhook || !isFreshLiveSetup) {
       confluence.ackStatus = 'historical';
       confluence.webhookStatus = 'skipped';
@@ -555,13 +633,6 @@ export class TradingConfluenceEngine {
       return;
     }
 
-    if (this.config.requireActiveKillzone && !activeKzNow) {
-      confluence.ackStatus = 'historical';
-      confluence.webhookStatus = 'skipped';
-      confluence.webhookDetail = 'Killzone fermee actuellement';
-      return;
-    }
-
     if (!this.config.alertsEnabled) {
       confluence.ackStatus = 'historical';
       confluence.webhookStatus = 'skipped';
@@ -569,20 +640,14 @@ export class TradingConfluenceEngine {
       return;
     }
 
-    if (this.config.highProbabilityOnly && confluence.probability !== 'HIGH') {
-      confluence.ackStatus = 'historical';
-      confluence.webhookStatus = 'skipped';
-      confluence.webhookDetail = 'Filtre Haute Probabilite D1+H4 actif';
-      this.emit();
-      return;
-    }
-
     // Fresh live ("en cours") alert -> enter pending validation state and dispatch immediately!
-    const intervalMs = Math.max(10, this.config.repeatAlertIntervalSec) * 1000;
     confluence.ackStatus = 'pending';
     confluence.reminderCount = 1;
     confluence.lastReminderAt = now;
-    confluence.nextReminderAt = now + intervalMs;
+    confluence.nextReminderAt =
+      MAX_ALERT_DELIVERIES > 1
+        ? now + Math.max(10, this.config.repeatAlertIntervalSec) * 1000
+        : null;
     confluence.webhookStatus = 'pending';
     this.saveAckState(confluence);
     this.emit();
@@ -607,99 +672,71 @@ export class TradingConfluenceEngine {
     cisd: CisdSignal,
     highSweep: KillzoneSweepEvent | null,
     lowSweep: KillzoneSweepEvent | null,
-    isIntrabarSignal: boolean
+    isIntrabarSignal: boolean,
+    timeframe: 'M3' | 'M5' = 'M3',
+    additionalSweeps: KillzoneSweepEvent[] = []
   ): ConfluenceAlert | null {
-    const activeSession = this.kzEngine.getActiveSessionAt(bar.time);
-    if (this.config.requireActiveKillzone && !activeSession) {
-      return null;
-    }
-
-    const lookback = this.config.kzLookbackBars;
     const ny = getNyDateTime(bar.time, this.config.tzMode);
+    const intervalMs = timeframe === 'M5' ? 5 * 60_000 : 3 * 60_000;
+    const allSweeps = [...this.kzEngine.getSweepEvents(), highSweep, lowSweep, ...additionalSweeps]
+      .filter((x): x is KillzoneSweepEvent => !!x)
+      .filter((x, i, arr) => arr.findIndex((y) => y.id === x.id) === i);
+    const isBearish = cisd.direction === 'bearish';
+    // A valid setup starts when price sweeps a previously formed session high/low.
+    // The source level may come from today's, yesterday's, or the previous NY day's
+    // Asia/London/NY AM/NY PM range. The sweep itself may happen outside a Killzone.
+    // Accept a matching CISD later on the same NY day as the sweep, whether it occurs
+    // before or after the price retests/re-enters the swept level. Source level age: 0-2 days.
+    const candidates = allSweeps
+      .filter((sw) => sw.isHigh === isBearish)
+      .filter((sw) => sw.sweptAt <= bar.time)
+      .filter((sw) => getNyDateTime(sw.sweptAt, this.config.tzMode).dayKey === ny.dayKey)
+      .filter((sw) => {
+        const ageDays = nyCalendarDayDistance(sw.createdAt, bar.time, this.config.tzMode);
+        return ageDays >= 0 && ageDays <= 2;
+      })
+      .sort((a, b) => a.sweptAt - b.sweptAt);
+    if (candidates.length === 0) return null;
 
-    if (cisd.direction === 'bearish' && highSweep) {
-      const barsBetween = barIndex - highSweep.sweptBarIndex;
-      const dedupeKey = `${highSweep.levelId}_BEARISH`;
-      if (
-        barsBetween >= 0 &&
-        barsBetween <= lookback &&
-        !this.consumedSweepKeys.has(dedupeKey)
-      ) {
-        this.consumedSweepKeys.add(dedupeKey);
-        const closedInsideLevel = bar.close < highSweep.level;
-        const { dailyBias, h4Bias, probability } = this.computeProbabilityAt(bar.time, 'BEARISH');
-        return {
-          id: `conf_${bar.time}_${barIndex}_${isIntrabarSignal ? 'live' : 'cls'}`,
-          dedupeKey,
-          timestamp: bar.time,
-          nyTimeStr: ny.formatted,
-          symbol: this.config.symbol,
-          direction: 'BEARISH',
-          activeKillzoneName: activeSession ? activeSession.name : null,
-          dailyBias,
-          h4Bias,
-          probability,
-          kzSweep: highSweep,
-          cisd,
-          barsBetweenSweepAndCisd: barsBetween,
-          closedInsideLevel,
-          isPreReentry: !closedInsideLevel,
-          isIntrabarSignal,
-          hasInternalSwingSweep: cisd.strongSweep,
-          webhookStatus: 'skipped',
-          webhookDetail: isIntrabarSignal ? 'Temps reel' : 'Historique passe',
-          ackStatus: 'historical',
-          acknowledgedAt: null,
-          acknowledgedBy: null,
-          reminderCount: 0,
-          lastReminderAt: null,
-          nextReminderAt: null,
-        };
-      }
-    }
+    const latestSweep = candidates[candidates.length - 1];
+    const direction = isBearish ? 'BEARISH' : 'BULLISH';
+    const dedupeKey = `${timeframe}_${candidates.map((x) => x.levelId).sort().join('+')}_${direction}`;
+    if (this.consumedSweepKeys.has(dedupeKey)) return null;
+    this.consumedSweepKeys.add(dedupeKey);
 
-    if (cisd.direction === 'bullish' && lowSweep) {
-      const barsBetween = barIndex - lowSweep.sweptBarIndex;
-      const dedupeKey = `${lowSweep.levelId}_BULLISH`;
-      if (
-        barsBetween >= 0 &&
-        barsBetween <= lookback &&
-        !this.consumedSweepKeys.has(dedupeKey)
-      ) {
-        this.consumedSweepKeys.add(dedupeKey);
-        const closedInsideLevel = bar.close > lowSweep.level;
-        const { dailyBias, h4Bias, probability } = this.computeProbabilityAt(bar.time, 'BULLISH');
-        return {
-          id: `conf_${bar.time}_${barIndex}_${isIntrabarSignal ? 'live' : 'cls'}`,
-          dedupeKey,
-          timestamp: bar.time,
-          nyTimeStr: ny.formatted,
-          symbol: this.config.symbol,
-          direction: 'BULLISH',
-          activeKillzoneName: activeSession ? activeSession.name : null,
-          dailyBias,
-          h4Bias,
-          probability,
-          kzSweep: lowSweep,
-          cisd,
-          barsBetweenSweepAndCisd: barsBetween,
-          closedInsideLevel,
-          isPreReentry: !closedInsideLevel,
-          isIntrabarSignal,
-          hasInternalSwingSweep: cisd.strongSweep,
-          webhookStatus: 'skipped',
-          webhookDetail: isIntrabarSignal ? 'Temps reel' : 'Historique passe',
-          ackStatus: 'historical',
-          acknowledgedAt: null,
-          acknowledgedBy: null,
-          reminderCount: 0,
-          lastReminderAt: null,
-          nextReminderAt: null,
-        };
-      }
-    }
-
-    return null;
+    const closedInsideLevel = candidates.every((sw) =>
+      isBearish ? bar.close < sw.level : bar.close > sw.level
+    );
+    const { dailyBias, h4Bias, probability } = this.computeProbabilityAt(bar.time, direction);
+    return {
+      id: `conf_${timeframe}_${bar.time}_${barIndex}_${isIntrabarSignal ? 'live' : 'cls'}`,
+      dedupeKey,
+      timestamp: bar.time,
+      nyTimeStr: ny.formatted,
+      symbol: this.config.symbol,
+      direction,
+      activeKillzoneName: latestSweep.sessionName,
+      dailyBias,
+      h4Bias,
+      probability,
+      kzSweep: latestSweep,
+      kzSweeps: candidates,
+      cisd,
+      timeframe,
+      barsBetweenSweepAndCisd: Math.max(0, Math.floor((bar.time - latestSweep.sweptAt) / intervalMs)),
+      closedInsideLevel,
+      isPreReentry: !closedInsideLevel,
+      isIntrabarSignal,
+      hasInternalSwingSweep: cisd.strongSweep,
+      webhookStatus: 'skipped',
+      webhookDetail: isIntrabarSignal ? `Temps reel ${timeframe}` : `Historique ${timeframe}`,
+      ackStatus: 'historical',
+      acknowledgedAt: null,
+      acknowledgedBy: null,
+      reminderCount: 0,
+      lastReminderAt: null,
+      nextReminderAt: null,
+    };
   }
 
   public async sendTestWebhook(): Promise<{ ok: boolean; detail: string; alert: ConfluenceAlert }> {
@@ -738,6 +775,7 @@ export class TradingConfluenceEngine {
             shortName: 'L',
             isHigh: true,
             level: Number((price - step * 1.5).toFixed(decimals)),
+            createdAt: now - 24 * 60 * 60 * 1000,
             sweptAt: now - 180000,
             sweptBarIndex: Math.max(0, this.confirmedBars.length - 1),
             sweepPrice: Number((price + step).toFixed(decimals)),
@@ -811,6 +849,7 @@ export class TradingConfluenceEngine {
         dailyBiasMode: this.config.dailyBiasMode,
         h4BiasMode: this.config.h4BiasMode,
         highProbabilityOnly: this.config.highProbabilityOnly,
+        enableM5Cisd: this.config.enableM5Cisd,
         telegramChatId: this.config.telegramChatId,
         customWebhookUrl: this.config.customWebhookUrl,
         alertsEnabled: this.config.alertsEnabled,

@@ -2,6 +2,11 @@ import { TradingConfluenceEngine } from './confluence.ts';
 import { getPriceDecimals, type Candle, type SupportedSymbol } from './types.ts';
 
 const THREE_MIN_MS = 3 * 60 * 1000;
+const FIVE_MIN_MS = 5 * 60 * 1000;
+
+function align5m(timestampMs: number): number {
+  return Math.floor(timestampMs / FIVE_MIN_MS) * FIVE_MIN_MS;
+}
 
 function align3m(timestampMs: number): number {
   return Math.floor(timestampMs / THREE_MIN_MS) * THREE_MIN_MS;
@@ -172,6 +177,74 @@ async function fetchYahooM3WithFallback(
   throw lastErr instanceof Error ? lastErr : new Error(`Donnees ${symbol} indisponibles`);
 }
 
+/** Independent M5 candles aggregated from Yahoo 1-minute history (never from M3). */
+async function fetchYahooM5History(symbol: SupportedSymbol): Promise<{ confirmed: Candle[]; live: Candle | null; ticker: string }> {
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
+    Accept: 'application/json',
+  };
+  let lastError: unknown = null;
+  for (const ticker of getYahooTickers(symbol)) {
+    try {
+      const res = await fetchWithTimeout(
+        `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1m&range=5d`,
+        { headers }
+      );
+      if (!res.ok) throw new Error(`Yahoo M5 (${ticker}) HTTP ${res.status}`);
+      const json = (await res.json()) as YahooChartResponse;
+      const result = json.chart?.result?.[0];
+      if (!result?.timestamp || !result.indicators?.quote?.[0]) throw new Error(`Donnees M5 ${symbol} indisponibles`);
+      const q = result.indicators.quote[0];
+      const buckets = new Map<number, Candle>();
+      for (let i = 0; i < result.timestamp.length; i++) {
+        const o = q.open?.[i], h = q.high?.[i], l = q.low?.[i], c = q.close?.[i];
+        if (o == null || h == null || l == null || c == null) continue;
+        const bucket = align5m(result.timestamp[i] * 1000);
+        const existing = buckets.get(bucket);
+        if (!existing) buckets.set(bucket, {
+          time: bucket, open: roundPrice(o, symbol), high: roundPrice(h, symbol),
+          low: roundPrice(l, symbol), close: roundPrice(c, symbol),
+          volume: q.volume?.[i] ?? 0, confirmed: true,
+        });
+        else {
+          existing.high = roundPrice(Math.max(existing.high, h), symbol);
+          existing.low = roundPrice(Math.min(existing.low, l), symbol);
+          existing.close = roundPrice(c, symbol);
+          existing.volume = (existing.volume ?? 0) + (q.volume?.[i] ?? 0);
+        }
+      }
+      let sorted = [...buckets.values()].sort((a, b) => a.time - b.time);
+      if (!sorted.length) throw new Error(`Aucune bougie M5 valide pour ${symbol}`);
+      let outputTicker = ticker;
+      if (ticker === FUTURES_TICKER) {
+        const spot = await fetchSwissquoteSpotPrice(symbol);
+        const ref = sorted[sorted.length - 1].close;
+        if (spot !== null) {
+          const basis = Math.abs(spot - ref) / spot > 0.0025 ? spot - ref : 0;
+          if (basis !== 0) {
+            sorted = sorted.map((c) => ({
+              ...c,
+              open: roundPrice(c.open + basis, symbol),
+              high: roundPrice(c.high + basis, symbol),
+              low: roundPrice(c.low + basis, symbol),
+              close: roundPrice(c.close + basis, symbol),
+            }));
+          }
+          outputTicker = 'spot-aligned';
+        }
+      }
+      const nowBucket = align5m(Date.now());
+      const last = sorted[sorted.length - 1];
+      if (last.time >= nowBucket) {
+        last.confirmed = false;
+        return { confirmed: sorted.slice(0, -1), live: last, ticker: outputTicker };
+      }
+      return { confirmed: sorted, live: null, ticker: outputTicker };
+    } catch (err) { lastError = err; }
+  }
+  throw lastError instanceof Error ? lastError : new Error(`Flux M5 indisponible pour ${symbol}`);
+}
+
 async function fetchSwissquoteSpotPrice(symbol: SupportedSymbol): Promise<number | null> {
   try {
     const res = await fetchWithTimeout(
@@ -324,6 +397,8 @@ export class MarketLiveFeed {
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   private historySyncTimer: ReturnType<typeof setInterval> | null = null;
   private currentLiveBar: Candle | null = null;
+  private currentLiveM5Bar: Candle | null = null;
+  private lastProcessedM5Time = 0;
   private lastKnownClose = 0;
   private isRunning = false;
   private isTickRunning = false;
@@ -414,9 +489,10 @@ export class MarketLiveFeed {
   private async loadInitialHistory() {
     const cfg = this.engine.getConfig();
     try {
-      const [data, htf] = await Promise.all([
+      const [data, htf, m5] = await Promise.all([
         this.fetchM3(cfg, true),
         fetchYahooHtfHistory(this.symbol).catch(() => ({ d1Bars: [], h4Bars: [] })),
+        fetchYahooM5History(this.symbol).catch(() => ({ confirmed: [], live: null, ticker: '' })),
       ]);
 
       this.currentLiveBar = data.live;
@@ -426,8 +502,13 @@ export class MarketLiveFeed {
         this.lastKnownClose = data.confirmed[data.confirmed.length - 1].close;
       }
 
+      const m5Confirmed = m5.ticker === FUTURES_TICKER ? m5.confirmed.map((c) => this.shiftCandle(c)) : m5.confirmed;
+      const m5Live = m5.live && m5.ticker === FUTURES_TICKER ? this.shiftCandle(m5.live) : m5.live;
+      this.currentLiveM5Bar = m5Live;
+      this.lastProcessedM5Time = m5Confirmed[m5Confirmed.length - 1]?.time ?? 0;
       this.engine.loadHtfHistory(htf.d1Bars, htf.h4Bars, false);
       this.engine.loadHistory(data.confirmed, data.live);
+      this.engine.loadM5History(m5Confirmed, m5Live);
       this.engine.setFeedStatus(true, Date.now(), null);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -465,6 +546,29 @@ export class MarketLiveFeed {
     }
 
     await this.engine.ingestLiveBar({ ...this.currentLiveBar }, false);
+
+    const m5Bucket = align5m(Date.now());
+    const m5 = this.currentLiveM5Bar;
+    if (!m5 || m5Bucket > m5.time) {
+      if (m5) {
+        await this.engine.ingestM5Bar({ ...m5, confirmed: true }, true);
+        this.lastProcessedM5Time = m5.time;
+      }
+      this.currentLiveM5Bar = {
+        time: m5Bucket, open: close,
+        high: roundPrice(Math.max(close, high), this.symbol),
+        low: roundPrice(Math.min(close, low), this.symbol),
+        close, volume: 0, confirmed: false,
+      };
+    } else {
+      this.currentLiveM5Bar = {
+        ...m5,
+        high: roundPrice(Math.max(m5.high, high, close), this.symbol),
+        low: roundPrice(Math.min(m5.low, low, close), this.symbol),
+        close, confirmed: false,
+      };
+    }
+    await this.engine.ingestM5Bar({ ...this.currentLiveM5Bar }, false);
     this.engine.setFeedStatus(true, Date.now(), null);
   }
 
@@ -489,9 +593,10 @@ export class MarketLiveFeed {
     this.isSyncRunning = true;
     const cfg = this.engine.getConfig();
     try {
-      const [data, htf] = await Promise.all([
+      const [data, htf, m5] = await Promise.all([
         this.fetchM3(cfg, false),
         fetchYahooHtfHistory(this.symbol).catch(() => ({ d1Bars: [], h4Bars: [] })),
+        fetchYahooM5History(this.symbol).catch(() => ({ confirmed: [], live: null, ticker: '' })),
       ]);
 
       if (htf.d1Bars.length > 0 || htf.h4Bars.length > 0) {
@@ -508,6 +613,20 @@ export class MarketLiveFeed {
         if (bar.time > lastConfirmedTime && bar.time < liveBucket) {
           await this.engine.ingestLiveBar(bar, true);
         }
+      }
+
+      const m5Confirmed = m5.ticker === FUTURES_TICKER ? m5.confirmed.map((c) => this.shiftCandle(c)) : m5.confirmed;
+      const m5Live = m5.live && m5.ticker === FUTURES_TICKER ? this.shiftCandle(m5.live) : m5.live;
+      for (const bar of m5Confirmed) {
+        if (bar.time > this.lastProcessedM5Time && bar.time < align5m(Date.now())) {
+          await this.engine.ingestM5Bar(bar, true);
+          this.lastProcessedM5Time = bar.time;
+        }
+      }
+      if (m5Live && !this.currentLiveM5Bar) {
+        this.currentLiveM5Bar = m5Live;
+      this.lastProcessedM5Time = m5Confirmed[m5Confirmed.length - 1]?.time ?? 0;
+        await this.engine.ingestM5Bar(m5Live, false);
       }
 
       // Yahoo's live bar is only used when the spot feed is down. Merging it while spot

@@ -33,14 +33,15 @@ const cfg: EngineConfig = {
   symbol: 'EUR/USD', marketSource: 'yahoo_swissquote', twelveDataApiKey: '', tzMode: 'Manual UTC-5 (EST)',
   tolerance: 0.7, swingPeriod: 12, expiryBars: 100, liquidityLookback: 10, kzLookbackBars: 10,
   requireActiveKillzone: true, triggerOnIntrabar: true, dailyBiasMode: 'BEARISH', h4BiasMode: 'BEARISH',
-  highProbabilityOnly: false, telegramBotToken: 'TKN', telegramChatId: '42', customWebhookUrl: '',
+  highProbabilityOnly: false, enableM5Cisd: true, telegramBotToken: 'TKN', telegramChatId: '42', customWebhookUrl: '',
   alertsEnabled: true, repeatAlertIntervalSec: 30, liveSetupMaxMinutes: 20,
 };
 
-let tgResolvedAt = 0; let notifiedAt = 0; const notified: number[] = [];
+let tgResolvedAt = 0; let notifiedAt = 0; let telegramCalls = 0; const notified: number[] = [];
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (url: any) => {
   if (String(url).includes('api.telegram.org')) {
+    telegramCalls += 1;
     await new Promise((r) => setTimeout(r, 300));          // slow Telegram
     tgResolvedAt = performance.now();
     return new Response(JSON.stringify({ ok: true, result: { message_id: 9 } }), { status: 200 });
@@ -68,12 +69,84 @@ ok(notified.length === 1 && notified[0] === 1, 'push notifier called once (remin
 ok(notifiedAt > 0 && notifiedAt < tgResolvedAt, `push fired BEFORE Telegram answered (${(tgResolvedAt - notifiedAt).toFixed(0)} ms earlier)`);
 ok(alert?.webhookStatus === 'sent', 'Telegram dispatch still completes');
 
+// Telegram repeats at the configured interval, up to 10 deliveries total.
+for (let delivery = 2; delivery <= 10; delivery++) {
+  Date.now = () => NOW + (delivery - 1) * 30_000;
+  await eng.processPendingReminders();
+}
+ok(telegramCalls === 10, `Telegram sends 10 deliveries total while unacknowledged (${telegramCalls})`);
+ok(eng.getSnapshot().confluenceAlerts[0].reminderCount === 10, 'reminder counter reaches the 10-delivery cap');
+Date.now = () => NOW + 400_000;
+await eng.processPendingReminders();
+ok(telegramCalls === 10, 'no more messages after the 10-delivery cap');
+
 // same setup must not fire twice when the bar closes
+Date.now = () => NOW;
 await eng.ingestLiveBar({ ...liveC, confirmed: true }, true);
 ok(eng.getSnapshot().confluenceAlerts.filter((a) => a.dedupeKey === alert.dedupeKey).length === 1, 'no duplicate alert on bar close');
-ok(notified.length === 1, 'no second push on bar close');
+ok(notified.length === 1, 'no second initial push on bar close');
 
-// ack stops reminders
+// ack stops reminders immediately
 eng.acknowledgeAlert(alert?.id??"", 'ui');
+Date.now = () => NOW + 500_000;
+await eng.processPendingReminders();
 ok(eng.getSnapshot().confluenceAlerts[0].ackStatus === 'acknowledged', 'ack in app works');
+ok(telegramCalls === 10, 'acknowledged alert never sends another Telegram reminder');
+Date.now = () => NOW;
+// Divergent Daily/H4 remains eligible even when legacy strict-alignment flag is true.
+const divergent = new TradingConfluenceEngine({ ...cfg, dailyBiasMode: 'BULLISH', h4BiasMode: 'BEARISH', highProbabilityOnly: true });
+divergent.loadHistory(bars, null);
+await divergent.ingestLiveBar(liveC, false);
+const divergentAlert = divergent.getSnapshot().confluenceAlerts[0];
+ok(divergentAlert?.probability === 'MEDIUM' && divergentAlert.ackStatus === 'pending', 'Daily bullish / H4 bearish setup is still alerted even when legacy strict filter is true');
+
+// One CISD can report several same-side session levels swept in the same setup.
+const dualSweepEngine = new TradingConfluenceEngine(cfg);
+const sweepA = { id: 'sw_nyam', levelId: 'nyam_high', sessionId: 'nyam' as const, sessionName: 'NY AM', shortName: 'NYA', isHigh: true, level: 1.0950, sweptAt: NOW - 60_000, sweptBarIndex: 1, sweepPrice: 1.0960 };
+const sweepB = { id: 'sw_nypm', levelId: 'nypm_high', sessionId: 'nypm' as const, sessionName: 'NY PM', shortName: 'NYP', isHigh: true, level: 1.0940, sweptAt: NOW - 30_000, sweptBarIndex: 2, sweepPrice: 1.0960 };
+(dualSweepEngine as any).kzEngine.getSweepEvents = () => [sweepA, sweepB];
+const dualAlert = (dualSweepEngine as any).evaluateConfluence(
+  { time: NOW, open: 1.0960, high: 1.0962, low: 1.0900, close: 1.0910, confirmed: true },
+  3,
+  { id: 'cisd_test', barIndex: 3, time: NOW, direction: 'bearish', originLevel: 1.0955, originBarIndex: 2, noiseRatio: 0.9, toleranceUsed: 0.7, strongSweep: true, wickedSwingLevel: 1.0960, barsSinceSwing: 1, closePrice: 1.0910 },
+  sweepB, null, false, 'M5'
+);
+ok(dualAlert?.timeframe === 'M5' && dualAlert.kzSweeps.length === 2, 'M5 signal records both NY AM and NY PM swept highs');
+
+
+// A Killzone sweep may produce its CISD later, including after a retest/re-entry,
+// but the setup must expire at the end of that same New York calendar day.
+const lateSweepEngine = new TradingConfluenceEngine(cfg);
+const lateSweepAt = Date.UTC(2026, 10, 17, 14, 30); // 09:30 EST, inside NY AM
+const lateSweep = { id: 'sw_late_day', levelId: 'nyam_high_late', sessionId: 'nyam' as const, sessionName: 'NY AM', shortName: 'NYA', isHigh: true, level: 1.0950, sweptAt: lateSweepAt, sweptBarIndex: 1, sweepPrice: 1.0960 };
+(lateSweepEngine as any).kzEngine.getSweepEvents = () => [lateSweep];
+const lateDayCisd = (lateSweepEngine as any).evaluateConfluence(
+  { time: Date.UTC(2026, 10, 17, 22, 30), open: 1.0960, high: 1.0962, low: 1.0900, close: 1.0910, confirmed: true },
+  10,
+  { id: 'cisd_late_day', barIndex: 10, time: Date.UTC(2026, 10, 17, 22, 30), direction: 'bearish', originLevel: 1.0955, originBarIndex: 2, noiseRatio: 0.9, toleranceUsed: 0.7, strongSweep: true, wickedSwingLevel: 1.0960, barsSinceSwing: 8, closePrice: 1.0910 },
+  lateSweep, null, false, 'M5'
+);
+ok(!!lateDayCisd && lateDayCisd.timeframe === 'M5', 'CISD M5 after NY AM sweep is accepted after NY PM/Killzone close on the same NY day');
+
+const nextDayEngine = new TradingConfluenceEngine(cfg);
+(nextDayEngine as any).kzEngine.getSweepEvents = () => [lateSweep];
+const nextDayCisd = (nextDayEngine as any).evaluateConfluence(
+  { time: Date.UTC(2026, 10, 18, 14, 30), open: 1.0960, high: 1.0962, low: 1.0900, close: 1.0910, confirmed: true },
+  11,
+  { id: 'cisd_next_day', barIndex: 11, time: Date.UTC(2026, 10, 18, 14, 30), direction: 'bearish', originLevel: 1.0955, originBarIndex: 2, noiseRatio: 0.9, toleranceUsed: 0.7, strongSweep: true, wickedSwingLevel: 1.0960, barsSinceSwing: 9, closePrice: 1.0910 },
+  lateSweep, null, false, 'M5'
+);
+ok(nextDayCisd === null, 'a previous NY-day sweep cannot trigger a CISD on the next NY day');
+
+const outOfKillzoneSweepEngine = new TradingConfluenceEngine(cfg);
+const outOfKillzoneSweep = { ...lateSweep, id: 'sw_outside_kz', levelId: 'nyam_high_outside', sweptAt: Date.UTC(2026, 10, 17, 22, 15) }; // 17:15 EST, after NY PM
+(outOfKillzoneSweepEngine as any).kzEngine.getSweepEvents = () => [outOfKillzoneSweep];
+const outOfKillzoneCisd = (outOfKillzoneSweepEngine as any).evaluateConfluence(
+  { time: Date.UTC(2026, 10, 17, 22, 30), open: 1.0960, high: 1.0962, low: 1.0900, close: 1.0910, confirmed: true },
+  12,
+  { id: 'cisd_after_kz_sweep', barIndex: 12, time: Date.UTC(2026, 10, 17, 22, 30), direction: 'bearish', originLevel: 1.0955, originBarIndex: 2, noiseRatio: 0.9, toleranceUsed: 0.7, strongSweep: true, wickedSwingLevel: 1.0960, barsSinceSwing: 1, closePrice: 1.0910 },
+  outOfKillzoneSweep, null, false, 'M5'
+);
+ok(outOfKillzoneCisd === null, 'a sweep that starts outside every Killzone cannot qualify');
+
 console.log(checks.join('\n'));

@@ -72,6 +72,8 @@ export interface KillzoneSweepEvent {
   shortName: string;
   isHigh: boolean;
   level: number;
+  /** Timestamp when the source session level was created (session close). */
+  createdAt: number;
   sweptAt: number;
   sweptBarIndex: number;
   sweepPrice: number;
@@ -145,10 +147,14 @@ export interface ConfluenceAlert {
   probability: ProbabilityTier;
   kzSweep: KillzoneSweepEvent;
   cisd: CisdSignal;
+  /** Chart timeframe that produced this setup. */
+  timeframe?: 'M3' | 'M5';
+  /** All same-side session levels swept before this CISD (e.g. NY AM + NY PM). */
+  kzSweeps?: KillzoneSweepEvent[];
   barsBetweenSweepAndCisd: number;
   closedInsideLevel: boolean;
   isPreReentry: boolean; // true = price has NOT yet re-entered inside the broken KZ level
-  isIntrabarSignal: boolean; // true = fired live before M3 candle close
+  isIntrabarSignal: boolean; // true = fired live before timeframe candle close
   hasInternalSwingSweep: boolean;
   webhookStatus: 'pending' | 'sent' | 'skipped' | 'failed';
   webhookDetail?: string;
@@ -173,19 +179,20 @@ export interface EngineConfig {
   expiryBars: number; // default 100
   liquidityLookback: number; // default 10 (M3 bars)
   // Confluence & Killzone filtering
-  kzLookbackBars: number; // default 10 (M3 bars = 30 min)
-  requireActiveKillzone: boolean; // true = signal only when price/time is inside an active Killzone
-  triggerOnIntrabar: boolean; // true = signal immediately on live M3 tick before bar close
+  kzLookbackBars: number; // legacy compatibility; sweep-to-CISD window is the same NY day
+  requireActiveKillzone: boolean; // legacy setting; sweep must occur in Killzone, CISD may confirm later same NY day
+  triggerOnIntrabar: boolean; // true = signal immediately on live M3/M5 tick before bar close
   // HTF Bias (Daily & H4)
   dailyBiasMode: HtfBiasMode;
   h4BiasMode: HtfBiasMode;
-  highProbabilityOnly: boolean; // true = only dispatch Telegram when M3 CISD aligns with BOTH D1 & H4
+  highProbabilityOnly: boolean; // legacy compatibility flag; probability is now classification-only
+  enableM5Cisd: boolean; // run a separate M5 CISD engine alongside M3
   // Telegram / Webhook & Repeat Alerts
   telegramBotToken: string;
   telegramChatId: string;
   customWebhookUrl: string;
   alertsEnabled: boolean;
-  repeatAlertIntervalSec: number; // default 30s repeat until user validates "J'ai vu"
+  repeatAlertIntervalSec: number; // reminder interval until acknowledgement, capped at 10 deliveries
   liveSetupMaxMinutes: number; // default 20m window while setup is still active/en cours
 }
 

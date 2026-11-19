@@ -53,9 +53,14 @@ await push.sendPushTest();
 ok(oauthCalls === 1, 'access token cached between sends');
 
 // alert message formatting
-const alert: any = { dedupeKey: 'lvl_12_BEARISH', id: 'conf_1', symbol: 'XAU/USD', direction: 'BEARISH', probability: 'HIGH',
-  activeKillzoneName: 'NY AM', kzSweep: { shortName: 'L', isHigh: true, sessionName: 'London', level: 4012.5 }, cisd: { closePrice: 4010.2 } };
+const alert: any = { dedupeKey: 'lvl_12_BEARISH', id: 'conf_1', symbol: 'XAU/USD', timeframe: 'M5', direction: 'BEARISH', probability: 'HIGH',
+  activeKillzoneName: 'NY AM', kzSweep: { id: 'sw1', shortName: 'L', isHigh: true, sessionName: 'London', level: 4012.5 },
+  kzSweeps: [
+    { id: 'sw1', shortName: 'L', isHigh: true, sessionName: 'London', level: 4012.5 },
+    { id: 'sw2', shortName: 'N', isHigh: true, sessionName: 'NY AM', level: 4015.0 },
+  ], cisd: { closePrice: 4010.2 } };
 const pm = push.buildAlertPushMessage(alert, 3);
-ok(pm.title.includes('Rappel #3') && pm.title.includes('BAISSIER') && pm.title.includes('HAUTE PROBA'), 'title: ' + pm.title);
+ok(pm.title.includes('Rappel #3') && pm.title.includes('BAISSIER') && pm.title.includes('HAUTE PROBA') && pm.title.includes('M5'), 'title includes timeframe: ' + pm.title);
+ok(pm.body.includes('L.H + N.H'), 'notification body lists both swept session levels: ' + pm.body);
 ok(pm.tag === 'lvl_12_BEARISH', 'stable tag so reminders replace each other');
 console.log(checks.join('\n'));

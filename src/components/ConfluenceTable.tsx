@@ -65,7 +65,7 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
       <div className="flex flex-wrap items-center justify-between gap-4 px-4 py-3 border-b border-[#1E293B]">
         <div className="flex items-center gap-4">
           <h2 className="text-sm font-semibold text-[#F1F5F9] whitespace-nowrap">
-            Journal de Confluence et Balayages
+            Historique des signaux et balayages
           </h2>
           <div className="flex items-center bg-[#0B0F17] border border-[#1E293B] rounded-md p-0.5">
             <button
@@ -127,10 +127,10 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
         filteredAlerts.length === 0 ? (
           <div className="px-6 py-10 text-center">
             <p className="text-sm text-[#94A3B8]">
-              Aucune confluence balayage Killzone + CISD M3 validee pour ce filtre.
+              Aucun signal Killzone + CISD M3/M5 pour ce filtre.
             </p>
             <p className="mt-1 text-xs text-[#64748B]">
-              Seuls les nouveaux signaux EN COURS de {symbol} declenchent Telegram et rappellent jusqu'a validation (« J'ai vu »).
+              Les signaux historiques sont conserves dans ce journal. Les alertes Telegram sont repetees jusqu’a « J’ai vu » (10 envois maximum).
             </p>
             <button
               type="button"
@@ -147,12 +147,12 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
               <thead>
                 <tr className="border-b border-[#1E293B] text-[11px] font-medium text-[#64748B]">
                   <th className="py-2.5 px-4 whitespace-nowrap">Heure NY</th>
-                  <th className="py-2.5 px-4 whitespace-nowrap">Direction</th>
+                  <th className="py-2.5 px-4 whitespace-nowrap">Direction / TF</th>
                   <th className="py-2.5 px-4 whitespace-nowrap">Probabilite (D1 / H4)</th>
                   <th className="py-2.5 px-4 whitespace-nowrap">Session Active</th>
                   <th className="py-2.5 px-4 whitespace-nowrap">Niveau Casse</th>
                   <th className="py-2.5 px-4 whitespace-nowrap">Position Prix</th>
-                  <th className="py-2.5 px-4 text-right whitespace-nowrap">Origine CISD M3</th>
+                  <th className="py-2.5 px-4 text-right whitespace-nowrap">Origine CISD</th>
                   <th className="py-2.5 px-4 whitespace-nowrap">Validation (J'ai vu)</th>
                   <th className="py-2.5 px-4 whitespace-nowrap">Statut Webhook</th>
                 </tr>
@@ -176,6 +176,7 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
                         <span className={isBull ? 'text-[#10B981]' : 'text-[#EF4444]'}>
                           {isBull ? '▲ HAUSSIER' : '▼ BAISSIER'}
                         </span>
+                        <span className="ml-2 rounded bg-[#1E293B] px-1.5 py-0.5 text-[10px] text-[#CBD5E1]">{a.timeframe ?? 'M3'}</span>
                       </td>
                       <td className="py-2.5 px-4 whitespace-nowrap">
                         {a.probability === 'HIGH' ? (
@@ -195,11 +196,11 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
                         {a.activeKillzoneName ?? 'Hors KZ'}
                       </td>
                       <td className="py-2.5 px-4 text-[#E2E8F0] whitespace-nowrap">
-                        {a.kzSweep.sessionName} · {a.kzSweep.shortName}.
-                        {a.kzSweep.isHigh ? 'H' : 'L'}{' '}
-                        <span className="font-mono tabular-nums text-[#94A3B8]">
-                          ({formatSymbolPrice(a.kzSweep.level, a.symbol)})
-                        </span>
+                        {(a.kzSweeps?.length ? a.kzSweeps : [a.kzSweep]).map((sw) => (
+                          <div key={sw.id} className="font-mono tabular-nums text-[#CBD5E1]">
+                            {sw.shortName}.{sw.isHigh ? 'H' : 'L'} <span className="text-[#94A3B8]">{formatSymbolPrice(sw.level, a.symbol)}</span>
+                          </div>
+                        ))}
                       </td>
                       <td className="py-2.5 px-4 whitespace-nowrap">
                         <span className={a.isPreReentry ? 'text-[#F59E0B] font-medium' : 'text-[#94A3B8]'}>
@@ -216,7 +217,7 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
                         {a.ackStatus === 'pending' ? (
                           <div className="flex items-center gap-2">
                             <span className="text-[#F59E0B] font-medium font-mono tabular-nums">
-                              En cours · #{a.reminderCount}
+                              En cours · 1 notification
                             </span>
                             <button
                               type="button"

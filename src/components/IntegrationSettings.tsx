@@ -26,19 +26,17 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
   const [triggerOnIntrabar, setTriggerOnIntrabar] = useState<boolean>(config.triggerOnIntrabar);
   const [dailyBiasMode, setDailyBiasMode] = useState<HtfBiasMode>(config.dailyBiasMode);
   const [h4BiasMode, setH4BiasMode] = useState<HtfBiasMode>(config.h4BiasMode);
-  const [highProbabilityOnly, setHighProbabilityOnly] = useState<boolean>(
-    config.highProbabilityOnly
-  );
+  const [enableM5Cisd, setEnableM5Cisd] = useState<boolean>(config.enableM5Cisd ?? true);
   const [telegramBotToken, setTelegramBotToken] = useState<string>('');
   const [showToken, setShowToken] = useState<boolean>(false);
   const [telegramChatId, setTelegramChatId] = useState<string>(config.telegramChatId);
   const [customWebhookUrl, setCustomWebhookUrl] = useState<string>(config.customWebhookUrl);
   const [alertsEnabled, setAlertsEnabled] = useState<boolean>(config.alertsEnabled);
-  const [repeatAlertIntervalSec, setRepeatAlertIntervalSec] = useState<number>(
-    config.repeatAlertIntervalSec ?? 30
-  );
   const [liveSetupMaxMinutes, setLiveSetupMaxMinutes] = useState<number>(
     config.liveSetupMaxMinutes ?? 20
+  );
+  const [repeatAlertIntervalSec, setRepeatAlertIntervalSec] = useState<number>(
+    config.repeatAlertIntervalSec ?? 30
   );
 
   const [saving, setSaving] = useState(false);
@@ -73,12 +71,12 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
     setTriggerOnIntrabar(config.triggerOnIntrabar);
     setDailyBiasMode(config.dailyBiasMode);
     setH4BiasMode(config.h4BiasMode);
-    setHighProbabilityOnly(config.highProbabilityOnly);
+    setEnableM5Cisd(config.enableM5Cisd ?? true);
     setTelegramChatId(config.telegramChatId);
     setCustomWebhookUrl(config.customWebhookUrl);
     setAlertsEnabled(config.alertsEnabled);
-    setRepeatAlertIntervalSec(config.repeatAlertIntervalSec ?? 30);
     setLiveSetupMaxMinutes(config.liveSetupMaxMinutes ?? 20);
+    setRepeatAlertIntervalSec(config.repeatAlertIntervalSec ?? 30);
   }, [config]);
 
   const handleSave = async (e: React.FormEvent) => {
@@ -97,12 +95,13 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
         triggerOnIntrabar,
         dailyBiasMode,
         h4BiasMode,
-        highProbabilityOnly,
+        highProbabilityOnly: false,
+        enableM5Cisd,
         telegramChatId,
         customWebhookUrl,
         alertsEnabled,
-        repeatAlertIntervalSec,
         liveSetupMaxMinutes,
+        repeatAlertIntervalSec,
       };
       if (telegramBotToken.trim().length > 0) {
         payload.telegramBotToken = telegramBotToken.trim();
@@ -139,10 +138,10 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
       >
         <div>
           <h2 className="text-base font-semibold text-[#F1F5F9]">
-            Parametres Killzones ICT et CISD M3
+            Parametres Killzones ICT et CISD M3 / M5
           </h2>
           <p className="mt-1 text-xs text-[#94A3B8]">
-            Calibration exacte des deux scripts Pine v6. Les moteurs XAU/USD et EUR/USD surveillent en parallele, le biais D1/H4 s'applique a {config.symbol}.
+            Les moteurs XAU/USD et EUR/USD surveillent en parallele. Daily et H4 sont analyses separement : ils peuvent etre divergents.
           </p>
         </div>
 
@@ -211,45 +210,30 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
             />
           </label>
 
-          <label className="flex flex-col gap-1.5 text-xs">
-            <span className="text-[#CBD5E1] font-medium">Fenetre Confluence Killzone (bougies M3)</span>
-            <input
-              type="number"
-              min={1}
-              max={60}
-              value={kzLookbackBars}
-              onChange={(e) => setKzLookbackBars(Number.parseInt(e.target.value, 10) || 10)}
-              className="bg-[#0B0F17] border border-[#1E293B] rounded-md px-3 py-2 text-sm font-mono tabular-nums text-[#F1F5F9] focus:outline-none focus:border-[#2563EB]"
-            />
-          </label>
         </div>
 
         <div className="pt-2 border-t border-[#1E293B] flex flex-col gap-4">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <span className="text-sm font-medium text-[#F1F5F9]">Killzone active requise</span>
-              <p className="text-xs text-[#94A3B8]">
-                Signale uniquement lorsque le prix evolue pendant une Killzone active (Asia, London, NY AM, NY PM).
-              </p>
+              <span className="text-sm font-medium text-[#F1F5F9]">Detection CISD M5 en complement du M3</span>
+              <p className="text-xs text-[#94A3B8]">Moteur M5 independant, calcule depuis les bougies 1 minute du flux Yahoo. Les deux timeframes peuvent produire leurs propres alertes.</p>
             </div>
-            <button
-              type="button"
-              onClick={() => setRequireActiveKillzone((v) => !v)}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-colors shrink-0 cursor-pointer ${
-                requireActiveKillzone
-                  ? 'bg-[#10B981]/15 border-[#10B981]/50 text-[#10B981]'
-                  : 'bg-[#0B0F17] border-[#1E293B] text-[#94A3B8]'
-              }`}
-            >
-              {requireActiveKillzone ? 'Killzone Active' : '24h / Tout horaire'}
+            <button type="button" onClick={() => setEnableM5Cisd((v) => !v)} className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-colors shrink-0 cursor-pointer ${enableM5Cisd ? 'bg-[#10B981]/15 border-[#10B981]/50 text-[#10B981]' : 'bg-[#0B0F17] border-[#1E293B] text-[#94A3B8]'}`}>
+              {enableM5Cisd ? 'M5 active' : 'M5 desactive'}
             </button>
+          </div>
+          <div className="rounded-md border border-[#1E293B] bg-[#0B0F17] p-3">
+            <span className="text-sm font-medium text-[#F1F5F9]">Surveillance apres sweep — jusqu'a la cloture NY</span>
+            <p className="mt-1 text-xs leading-relaxed text-[#94A3B8]">
+              Le sweep initial doit se produire dans une Killzone (Asia, London, NY AM ou NY PM). Apres ce sweep, le moteur continue de chercher un CISD M3/M5, meme apres la fin de la Killzone et apres un retest ou une reintegration, jusqu'a 23:59 heure de New York. Le Daily et le H4 servent a classer la probabilite, pas a bloquer les alertes divergentes.
+            </p>
           </div>
 
           <div className="flex items-center justify-between gap-4">
             <div>
               <span className="text-sm font-medium text-[#F1F5F9]">Detection immediate avant reintegration</span>
               <p className="text-xs text-[#94A3B8]">
-                Alerte en temps reel intrabar M3 des qu'il y a cassure + CISD contraire, sans attendre le retour dans le range.
+                Alerte en temps reel intrabar M3 et M5 des qu'il y a cassure + CISD, sans attendre le retour dans le range.
               </p>
             </div>
             <button
@@ -293,31 +277,21 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
             </label>
           </div>
 
-          <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center justify-between gap-4 rounded-md border border-[#1E293B] bg-[#0B0F17] px-3 py-3">
             <div>
-              <span className="text-sm font-medium text-[#F1F5F9]">Telegram Haute Probabilite (D1 + H4) uniquement</span>
-              <p className="text-xs text-[#94A3B8]">
-                N'envoie sur Telegram que lorsque le CISD M3 va dans la meme direction que Daily ET H4.
+              <span className="text-sm font-medium text-[#F1F5F9]">Classement automatique Daily / H4</span>
+              <p className="text-xs text-[#94A3B8] mt-1">
+                Daily et H4 alignes dans le sens du CISD = HAUTE PROBABILITE. S'ils divergent ou sont contre le CISD, le signal reste alerte dans la Killzone avec son classement MEDIUM ou CONTRE-TENDANCE.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => setHighProbabilityOnly((v) => !v)}
-              className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-colors shrink-0 cursor-pointer ${
-                highProbabilityOnly
-                  ? 'bg-[#10B981]/15 border-[#10B981]/50 text-[#10B981]'
-                  : 'bg-[#0B0F17] border-[#1E293B] text-[#94A3B8]'
-              }`}
-            >
-              {highProbabilityOnly ? 'D1+H4 Requis' : 'Toutes alertes'}
-            </button>
+            <span className="px-3 py-1.5 text-xs font-semibold rounded-md border border-[#10B981]/50 bg-[#10B981]/15 text-[#10B981] shrink-0">AUTO</span>
           </div>
 
           <div className="flex items-center justify-between gap-4">
             <div>
-              <span className="text-sm font-medium text-[#F1F5F9]">Alertes EN COURS + Rappels Telegram</span>
+              <span className="text-sm font-medium text-[#F1F5F9]">Rappels Telegram jusqu’a validation</span>
               <p className="text-xs text-[#94A3B8]">
-                Alerte uniquement sur les signaux en cours (&lt; 6 min, jamais l'historique passe) et repete jusqu'a validation (« J'ai vu »).
+                Un message initial, puis un rappel selon l’intervalle choisi. Le bouton « J'ai vu » arrete immediatement les rappels.
               </p>
             </div>
             <button
@@ -335,17 +309,18 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <label className="flex flex-col gap-1.5 text-xs">
-              <span className="text-[#CBD5E1] font-medium">Rappel si non valide (sec)</span>
+              <span className="text-[#CBD5E1] font-medium">Intervalle des rappels Telegram (secondes)</span>
               <input
                 type="number"
                 min={10}
                 max={300}
                 value={repeatAlertIntervalSec}
                 onChange={(e) =>
-                  setRepeatAlertIntervalSec(Math.max(10, Number.parseInt(e.target.value, 10) || 30))
+                  setRepeatAlertIntervalSec(Math.min(300, Math.max(10, Number.parseInt(e.target.value, 10) || 30)))
                 }
                 className="bg-[#0B0F17] border border-[#1E293B] rounded-md px-3 py-2 text-sm font-mono tabular-nums text-[#F1F5F9] focus:outline-none focus:border-[#2563EB]"
               />
+              <span className="text-[#64748B]">Maximum 10 notifications par signal, rappels compris.</span>
             </label>
 
             <label className="flex flex-col gap-1.5 text-xs">
@@ -362,6 +337,7 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
               />
             </label>
           </div>
+          <p className="text-xs text-[#94A3B8]">Telegram renvoie le signal a l'intervalle choisi jusqu'a « J'ai vu », a 10 notifications au total ou a l'expiration du setup.</p>
 
           <div className="grid grid-cols-1 gap-4">
             <label className="flex flex-col gap-1.5 text-xs">
@@ -451,7 +427,7 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
         <div className="border-t border-[#1E293B] divide-y divide-[#1E293B]/60 text-xs">
           <div className="py-3 flex items-center justify-between gap-4">
             <span className="text-[#94A3B8]">Symbole affiche</span>
-            <span className="font-mono font-medium text-[#F1F5F9]">{config.symbol} · M3 (3 min)</span>
+            <span className="font-mono font-medium text-[#F1F5F9]">{config.symbol} · M3 / M5</span>
           </div>
           <div className="py-3 flex items-center justify-between gap-4">
             <span className="text-[#94A3B8]">Source de marche</span>
@@ -466,7 +442,7 @@ export const IntegrationSettings: React.FC<IntegrationSettingsProps> = ({
           <div className="py-3 flex items-center justify-between gap-4">
             <span className="text-[#94A3B8]">Etat du flux</span>
             <span className={feedStatus.connected ? 'text-[#10B981] font-medium' : 'text-[#EF4444]'}>
-              {feedStatus.connected ? `Connecte · ${feedStatus.barCount} bougies M3` : feedStatus.lastError ?? 'Deconnecte'}
+              {feedStatus.connected ? `Connecte · ${feedStatus.barCount} bougies M3 (M5 independant)` : feedStatus.lastError ?? 'Deconnecte'}
             </span>
           </div>
           <div className="py-3 flex items-center justify-between gap-4">

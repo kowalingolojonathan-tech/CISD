@@ -22,11 +22,13 @@ export function formatTelegramMessage(alert: ConfluenceAlert, reminderNumber = 1
   const fmt = (p: number) => formatSymbolPrice(p, alert.symbol);
   const dirLabel = alert.direction === 'BULLISH' ? 'RETOURNEMENT HAUSSIER' : 'RETOURNEMENT BAISSIER';
   const arrow = alert.direction === 'BULLISH' ? '▲' : '▼';
-  const sweepType = alert.kzSweep.isHigh ? `${alert.kzSweep.shortName}.H` : `${alert.kzSweep.shortName}.L`;
+  const sweeps = alert.kzSweeps?.length ? alert.kzSweeps : [alert.kzSweep];
+  const sweepLines = sweeps.map((sw) => `• ${sw.sessionName} (${sw.shortName}.${sw.isHigh ? 'H' : 'L'}) @ <code>${fmt(sw.level)}</code>`);
+  const timeframe = alert.timeframe ?? 'M3';
   const phaseLabel = alert.isPreReentry
     ? 'AVANT REINTEGRATION (Prix encore hors niveau)'
     : 'REINTEGRATION CONFIRMEE';
-  const timingLabel = alert.isIntrabarSignal ? 'Temps reel (Intrabar M3)' : 'Cloture M3 confirmee';
+  const timingLabel = alert.isIntrabarSignal ? `Temps reel (Intrabar ${timeframe})` : `Cloture ${timeframe} confirmee`;
   const sessionLabel = alert.activeKillzoneName ?? 'Hors Killzone';
   const probHeader =
     alert.probability === 'HIGH'
@@ -36,7 +38,7 @@ export function formatTelegramMessage(alert: ConfluenceAlert, reminderNumber = 1
       : `<b>Contre-Tendance HTF</b>\n`;
   const reminderBanner =
     reminderNumber > 1
-      ? `<b>🔔 RAPPEL #${reminderNumber} — SIGNAL EN COURS NON VALIDE</b>\n<i>Cliquez sur "✅ J'ai vu" ci-dessous ou validez dans l'app pour stopper l'alerte.</i>\n\n`
+      ? `<b>🔔 RAPPEL #${reminderNumber} — SIGNAL EN COURS NON VALIDE</b>\n<i>Cliquez sur "✅ J'ai vu" ci-dessous ou validez dans l'app pour marquer le signal comme vu.</i>\n\n`
       : `<b>🔴 SIGNAL EN COURS — VALIDATION REQUISE</b>\n`;
   const swingLine = alert.hasInternalSwingSweep
     ? `\n• <b>Swing Sweep AlgoAlpha :</b> Confirme (${
@@ -45,15 +47,15 @@ export function formatTelegramMessage(alert: ConfluenceAlert, reminderNumber = 1
     : '';
 
   return [
-    `${reminderBanner}${probHeader}<b>${arrow} SIGNAL CONFLUENCE — ${alert.symbol} M3</b>`,
+    `${reminderBanner}${probHeader}<b>${arrow} SIGNAL CONFLUENCE — ${alert.symbol} ${timeframe}</b>`,
     `<b>Direction :</b> ${dirLabel}`,
     `<b>Biais HTF :</b> Daily <code>${biasFr(alert.dailyBias)}</code> · H4 <code>${biasFr(alert.h4Bias)}</code>`,
     `<b>Killzone Active :</b> ${sessionLabel}`,
-    `<b>Cassure Niveau :</b> ${alert.kzSweep.sessionName} (${sweepType}) @ <code>${fmt(alert.kzSweep.level)}</code>`,
+    `<b>Niveaux balayes (${sweeps.length}) :</b>\n${sweepLines.join('\n')}`, 
     `<b>Prix Actuel / Sweep :</b> <code>${fmt(alert.cisd.closePrice)}</code> (Meche: <code>${fmt(alert.kzSweep.sweepPrice)}</code>)`,
     `<b>Position Prix :</b> ${phaseLabel}`,
-    `<b>CISD M3 Contraire :</b> Origine <code>${fmt(alert.cisd.originLevel)}</code> · Ratio <code>${alert.cisd.noiseRatio.toFixed(2)}</code> (&gt; ${alert.cisd.toleranceUsed})`,
-    `<b>Declenchement :</b> ${timingLabel} · Delai ${alert.barsBetweenSweepAndCisd} bougie(s) M3${swingLine}`,
+    `<b>CISD ${timeframe} :</b> Origine <code>${fmt(alert.cisd.originLevel)}</code> · Ratio <code>${alert.cisd.noiseRatio.toFixed(2)}</code> (&gt; ${alert.cisd.toleranceUsed})`,
+    `<b>Declenchement :</b> ${timingLabel} · Delai ${alert.barsBetweenSweepAndCisd} bougie(s) ${timeframe}${swingLine}`,
     `<b>Heure NY :</b> <code>${alert.nyTimeStr}</code>`,
   ].join('\n');
 }
@@ -101,7 +103,7 @@ export async function dispatchAlertWebhook(
           inline_keyboard: [
             [
               {
-                text: "✅ J'ai vu — Valider (Stopper rappel)",
+                text: "✅ J'ai vu — Valider",
                 callback_data: `ack:${alert.symbol}:${alert.timestamp}`,
               },
             ],

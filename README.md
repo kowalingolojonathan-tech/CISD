@@ -61,3 +61,22 @@ Un `Dockerfile` est fourni. Sur Cloud Run : `--min-instances=1 --no-cpu-throttli
 - L'APK est signé avec une clé de debug **commitée** (`android-signing/`) : pratique pour installer
   les mises à jour par-dessus, suffisant pour un usage personnel, **inadapté au Play Store**.
 - `.push-tokens.json` (appareils enregistrés, mode serveur) est local au serveur.
+
+
+## M3 / M5 et notifications Telegram
+
+Le moteur CISD M3 reste actif. Un moteur M5 independant peut etre active dans les parametres; ses bougies sont construites a partir des donnees 1 minute Yahoo (pas en agregant artificiellement des bougies M3). Les alertes affichent tous les niveaux de session de meme sens balayes dans la fenetre de confluence (par exemple NY AM et NY PM). Les biais Daily et H4 sont affiches separement; les configurations divergentes restent autorisees et continuent a declencher une alerte dans la Killzone. La probabilite est classee HAUTE lorsque Daily et H4 confirment tous deux la direction du CISD; sinon le signal reste visible avec son classement MEDIUM ou CONTRE-TENDANCE. Telegram envoie un message initial puis des rappels a l'intervalle configure, jusqu'a « J'ai vu », 10 envois au total ou expiration du setup. Le journal conserve jusqu'a 300 signaux reconstruits a partir de l'historique de marche disponible.
+
+
+### Delayed CISD after a Killzone sweep
+
+A qualifying sweep must occur while one of the configured Killzones is active. After that initial sweep, the engine continues to look for a same-direction CISD on M3 and M5 until 23:59 New York time on the same trading day. The CISD may therefore confirm after the Killzone has ended, including after a retest or re-entry through the swept level. A sweep from a prior New York day, or a sweep that first occurs outside a Killzone, cannot trigger the setup. Daily/H4 alignment determines the probability classification and does not suppress divergent setups.
+
+
+## Session sweep-to-CISD eligibility (V4)
+
+- Session high/low levels from today, yesterday, and the previous New York calendar day remain eligible until swept.
+- A level may be swept outside its original Killzone; CISD confirmation may also occur after a Killzone ends.
+- A matching directional CISD (bearish after a session high sweep, bullish after a session low sweep) is alertable later on the same New York day as the sweep.
+- Confirmation is accepted whether it occurs before or after a retest/re-entry of the swept level.
+- Multiple same-direction session levels swept before the CISD are grouped in the alert.

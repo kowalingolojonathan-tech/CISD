@@ -47,7 +47,7 @@ export interface HubEnv {
 export interface HubOptions {
   storage: HubStorage;
   env?: HubEnv;
-  /** Fired the instant a live alert (or reminder) is due, before Telegram is awaited. */
+  /** Fired for the initial live alert, before Telegram delivery is awaited. */
   onAlert?: (alert: ConfluenceAlert, reminderNumber: number) => void;
 }
 
@@ -120,7 +120,8 @@ export class EngineHub {
       dailyBiasMode:
         htf?.dailyBiasMode ?? (symbol === 'XAU/USD' ? p.dailyBiasMode ?? 'AUTO' : 'AUTO'),
       h4BiasMode: htf?.h4BiasMode ?? (symbol === 'XAU/USD' ? p.h4BiasMode ?? 'AUTO' : 'AUTO'),
-      highProbabilityOnly: p.highProbabilityOnly ?? false,
+      highProbabilityOnly: false,
+      enableM5Cisd: p.enableM5Cisd ?? true,
       telegramBotToken: p.telegramBotToken || this.env.telegramBotToken || '',
       telegramChatId: p.telegramChatId || this.env.telegramChatId || '',
       customWebhookUrl: p.customWebhookUrl ?? '',
@@ -144,6 +145,7 @@ export class EngineHub {
         requireActiveKillzone: xau.requireActiveKillzone,
         triggerOnIntrabar: xau.triggerOnIntrabar,
         highProbabilityOnly: xau.highProbabilityOnly,
+        enableM5Cisd: xau.enableM5Cisd,
         telegramBotToken: xau.telegramBotToken,
         telegramChatId: xau.telegramChatId,
         customWebhookUrl: xau.customWebhookUrl,
@@ -272,7 +274,8 @@ export class EngineHub {
     if (body.h4BiasMode === 'AUTO' || body.h4BiasMode === 'BULLISH' || body.h4BiasMode === 'BEARISH') {
       htf.h4BiasMode = body.h4BiasMode;
     }
-    if (typeof body.highProbabilityOnly === 'boolean') shared.highProbabilityOnly = body.highProbabilityOnly;
+    shared.highProbabilityOnly = false; // Legacy setting retained for compatibility; all in-killzone CISDs remain alertable.
+    if (typeof body.enableM5Cisd === 'boolean') shared.enableM5Cisd = body.enableM5Cisd;
     if (typeof body.telegramBotToken === 'string' && body.telegramBotToken.trim().length > 0) {
       shared.telegramBotToken = body.telegramBotToken.trim();
     }
@@ -313,7 +316,7 @@ export class EngineHub {
     void this.feeds['XAU/USD'].start();
     void this.feeds['EUR/USD'].start();
 
-    // Repeat reminders for unacknowledged live alerts
+    // Expire stale pending alerts and resend reminders until acknowledgement or delivery cap
     this.timers.push(
       setInterval(() => {
         for (const s of SUPPORTED_SYMBOLS) void this.engines[s].processPendingReminders();
@@ -355,7 +358,7 @@ export class EngineHub {
           await answerTelegramCallback(
             cfg.telegramBotToken,
             cb.id,
-            "✅ Alerte validee (J'ai vu) — Rappels arretes.",
+            "✅ Alerte validee (J'ai vu).",
             cb.message?.chat?.id,
             cb.message?.message_id
           );
@@ -375,7 +378,7 @@ export class EngineHub {
             await sendTelegramSimpleText(
               cfg.telegramBotToken,
               msgChatId,
-              `✅ <b>Validation enregistree :</b> ${total} alerte(s) en cours marquee(s) comme vue(s). Les rappels sont arretes.`
+              `✅ <b>Validation enregistree :</b> ${total} alerte(s) en cours marquee(s) comme vue(s). Le signal est marque comme vu.`
             );
           }
         }

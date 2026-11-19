@@ -63,7 +63,7 @@ export class CisdEngine {
   }
 
   /**
-   * Processes one confirmed M3 candle sequentially, matching Pine Script v6 execution bar-by-bar.
+   * Processes one confirmed candle sequentially, matching Pine Script v6 execution bar-by-bar.
    * Returns a CisdSignal if cisd == 1 or cisd == 2 triggered on this bar.
    */
   public processConfirmedBar(bar: Candle): CisdSignal | null {
@@ -320,7 +320,7 @@ export class CisdEngine {
   }
 
   /**
-   * Non-mutating live evaluation of the current unconfirmed M3 candle so reversals
+   * Non-mutating live evaluation of the current unconfirmed candle so reversals
    * after a Killzone break are signaled immediately without waiting for bar close.
    */
   public previewLiveBar(liveBar: Candle): CisdSignal | null {
