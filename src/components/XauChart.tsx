@@ -152,7 +152,8 @@ export const XauChart: React.FC<XauChartProps> = ({
       }
       if (showUnswept) {
         for (const lvl of unsweptLevels) {
-          if (!lvl.swept && lvl.level >= minP * 0.99 && lvl.level <= maxP * 1.01) {
+          const visibleInWindow = lvl.createdBarIndex < end && (!lvl.swept || lvl.sweptBarIndex === null || lvl.sweptBarIndex >= start);
+          if (visibleInWindow) {
             minP = Math.min(minP, lvl.level);
             maxP = Math.max(maxP, lvl.level);
           }
@@ -247,42 +248,48 @@ export const XauChart: React.FC<XauChartProps> = ({
         }
       }
 
-      // 2. Unswept Levels (active extended to right, swept terminated at sweep bar)
+      // 2. Niveaux des sessions : les niveaux cassés restent visibles jusqu'à la bougie du sweep.
       if (showUnswept) {
         for (const lvl of unsweptLevels) {
+          if (lvl.createdBarIndex >= end) continue;
           if (lvl.swept && lvl.sweptBarIndex !== null && lvl.sweptBarIndex < start) continue;
-          if (!lvl.swept && lvl.createdBarIndex >= end) continue;
 
           const startIdx = Math.max(start, lvl.createdBarIndex);
           const x1 = xForIndex(startIdx);
-          const x2 = lvl.swept && lvl.sweptBarIndex !== null
-            ? xForIndex(Math.min(end - 1, lvl.sweptBarIndex))
+          const sweepInWindow = lvl.swept && lvl.sweptBarIndex !== null;
+          const x2 = sweepInWindow
+            ? xForIndex(Math.min(end - 1, lvl.sweptBarIndex as number))
             : padLeft + plotW;
 
           if (x2 <= x1) continue;
           const y = yForPrice(lvl.level);
+          const tag = `${lvl.shortName}.${lvl.isHigh ? 'H' : 'L'} ${formatSymbolPrice(lvl.level, symbol)}${lvl.swept ? ' · CASSÉ' : ' · EN ATTENTE'}`;
 
           ctx.save();
-          ctx.strokeStyle = lvl.swept ? `${lvl.color}55` : `${lvl.color}CC`;
-          ctx.lineWidth = lvl.swept ? 1 : 1.25;
-          ctx.setLineDash([4, 4]);
+          ctx.strokeStyle = lvl.swept ? `${lvl.color}E6` : `${lvl.color}A8`;
+          ctx.lineWidth = lvl.swept ? 2 : 1.35;
+          ctx.setLineDash(lvl.swept ? [] : [5, 4]);
           ctx.beginPath();
           ctx.moveTo(x1, y);
           ctx.lineTo(x2, y);
           ctx.stroke();
           ctx.restore();
 
-          if (!lvl.swept) {
+          // Libellé de session pour les niveaux cassés comme pour les niveaux encore actifs.
+          ctx.save();
+          ctx.font = '600 9px "JetBrains Mono", monospace';
+          ctx.textAlign = 'right';
+          ctx.textBaseline = 'bottom';
+          ctx.fillStyle = lvl.swept ? lvl.color : '#CBD5E1';
+          const labelX = sweepInWindow ? Math.max(x1 + 4, x2 - 4) : padLeft + plotW - 6;
+          ctx.fillText(tag, labelX, y - 3);
+          if (sweepInWindow) {
             ctx.fillStyle = lvl.color;
-            ctx.font = '600 10px "JetBrains Mono", monospace';
-            ctx.textAlign = 'right';
-            ctx.textBaseline = 'bottom';
-            ctx.fillText(
-              `${lvl.shortName}.${lvl.isHigh ? 'H' : 'L'} ${formatSymbolPrice(lvl.level, symbol)}`,
-              padLeft + plotW - 6,
-              y - 2
-            );
+            ctx.beginPath();
+            ctx.arc(x2, y, 3.5, 0, Math.PI * 2);
+            ctx.fill();
           }
+          ctx.restore();
         }
       }
 
@@ -556,7 +563,7 @@ export const XauChart: React.FC<XauChartProps> = ({
           <div className="flex items-center bg-[#0B0F17] border border-[#1E293B] rounded-md p-0.5">
             {[
               { label: 'Boxes', active: showBoxes, toggle: () => setShowBoxes((v) => !v) },
-              { label: 'Unswept', active: showUnswept, toggle: () => setShowUnswept((v) => !v) },
+              { label: 'Niveaux sessions', active: showUnswept, toggle: () => setShowUnswept((v) => !v) },
               { label: 'Swings', active: showSwings, toggle: () => setShowSwings((v) => !v) },
               { label: 'CHoCH', active: showChoch, toggle: () => setShowChoch((v) => !v) },
             ].map((item) => (
@@ -573,6 +580,10 @@ export const XauChart: React.FC<XauChartProps> = ({
                 {item.label}
               </button>
             ))}
+          </div>
+          <div className="hidden md:flex items-center gap-2 text-[10px] text-[#94A3B8] whitespace-nowrap" title="Les lignes pleines marquent les niveaux de session déjà cassés ; les pointillés indiquent les niveaux encore en attente.">
+            <span className="inline-block w-5 border-t-2 border-[#F59E0B]" /> Cassé
+            <span className="inline-block w-5 border-t border-dashed border-[#94A3B8]" /> En attente
           </div>
 
           <div className="hidden sm:flex items-center bg-[#0B0F17] border border-[#1E293B] rounded-md p-0.5">

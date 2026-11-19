@@ -49,26 +49,28 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
   const [viewMode, setViewMode] = useState<'confluences' | 'sweeps'>('confluences');
   const [historyDays, setHistoryDays] = useState<3 | 4>(3);
 
+  // L'historique demandé est volontairement limité aux signaux M3.
+  const m3Alerts = useMemo(() => alerts.filter((a) => (a.timeframe ?? 'M3') === 'M3'), [alerts]);
   const pendingCount = useMemo(
-    () => alerts.filter((a) => a.ackStatus === 'pending').length,
-    [alerts]
+    () => m3Alerts.filter((a) => a.ackStatus === 'pending').length,
+    [m3Alerts]
   );
 
   const filteredAlerts = useMemo(() => {
     const cutoff = Date.now() - historyDays * 24 * 60 * 60 * 1000;
-    const recent = alerts.filter((a) => a.timestamp >= cutoff);
+    const recent = m3Alerts.filter((a) => a.timestamp >= cutoff);
     if (filter === 'ALL') return recent;
     if (filter === 'PENDING') return recent.filter((a) => a.ackStatus === 'pending');
     if (filter === 'HIGH') return recent.filter((a) => a.probability === 'HIGH');
     return recent.filter((a) => a.direction === filter);
-  }, [alerts, filter, historyDays]);
+  }, [m3Alerts, filter, historyDays]);
 
   return (
     <div className="bg-[#111827] border border-[#1E293B] rounded-lg overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-4 px-4 py-3 border-b border-[#1E293B]">
         <div className="flex items-center gap-4">
           <h2 className="text-sm font-semibold text-[#F1F5F9] whitespace-nowrap">
-            Historique des signaux et balayages
+            Historique des signaux M3 et balayages
           </h2>
           <div className="flex items-center bg-[#0B0F17] border border-[#1E293B] rounded-md p-0.5">
             <button
@@ -80,7 +82,7 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
                   : 'text-[#64748B] hover:text-[#CBD5E1]'
               }`}
             >
-              Confluences ({alerts.length})
+              Signaux M3 ({m3Alerts.length})
             </button>
             <button
               type="button"
@@ -139,7 +141,7 @@ export const ConfluenceTable: React.FC<ConfluenceTableProps> = ({
         filteredAlerts.length === 0 ? (
           <div className="px-6 py-10 text-center">
             <p className="text-sm text-[#94A3B8]">
-              Aucun signal Killzone + CHoCH M2/M3 pour ce filtre.
+              Aucun signal Killzone + CHoCH M3 pour ce filtre.
             </p>
             <p className="mt-1 text-xs text-[#64748B]">
               Les signaux historiques sont conserves dans ce journal. Les alertes Telegram sont repetees jusqu’a « J’ai vu » (10 envois maximum).
