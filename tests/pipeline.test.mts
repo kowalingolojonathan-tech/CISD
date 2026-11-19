@@ -102,8 +102,8 @@ ok(divergentAlert?.probability === 'MEDIUM' && divergentAlert.ackStatus === 'pen
 
 // One CISD can report several same-side session levels swept in the same setup.
 const dualSweepEngine = new TradingConfluenceEngine(cfg);
-const sweepA = { id: 'sw_nyam', levelId: 'nyam_high', sessionId: 'nyam' as const, sessionName: 'NY AM', shortName: 'NYA', isHigh: true, level: 1.0950, sweptAt: NOW - 60_000, sweptBarIndex: 1, sweepPrice: 1.0960 };
-const sweepB = { id: 'sw_nypm', levelId: 'nypm_high', sessionId: 'nypm' as const, sessionName: 'NY PM', shortName: 'NYP', isHigh: true, level: 1.0940, sweptAt: NOW - 30_000, sweptBarIndex: 2, sweepPrice: 1.0960 };
+const sweepA = { id: 'sw_nyam', levelId: 'nyam_high', sessionId: 'nyam' as const, sessionName: 'NY AM', shortName: 'NYA', isHigh: true, level: 1.0950, createdAt: NOW - 24 * 60 * 60_000, sweptAt: NOW - 60_000, sweptBarIndex: 1, sweepPrice: 1.0960 };
+const sweepB = { id: 'sw_nypm', levelId: 'nypm_high', sessionId: 'nypm' as const, sessionName: 'NY PM', shortName: 'NYP', isHigh: true, level: 1.0940, createdAt: NOW - 24 * 60 * 60_000, sweptAt: NOW - 30_000, sweptBarIndex: 2, sweepPrice: 1.0960 };
 (dualSweepEngine as any).kzEngine.getSweepEvents = () => [sweepA, sweepB];
 const dualAlert = (dualSweepEngine as any).evaluateConfluence(
   { time: NOW, open: 1.0960, high: 1.0962, low: 1.0900, close: 1.0910, confirmed: true },
@@ -118,7 +118,7 @@ ok(dualAlert?.timeframe === 'M5' && dualAlert.kzSweeps.length === 2, 'M5 signal 
 // but the setup must expire at the end of that same New York calendar day.
 const lateSweepEngine = new TradingConfluenceEngine(cfg);
 const lateSweepAt = Date.UTC(2026, 10, 17, 14, 30); // 09:30 EST, inside NY AM
-const lateSweep = { id: 'sw_late_day', levelId: 'nyam_high_late', sessionId: 'nyam' as const, sessionName: 'NY AM', shortName: 'NYA', isHigh: true, level: 1.0950, sweptAt: lateSweepAt, sweptBarIndex: 1, sweepPrice: 1.0960 };
+const lateSweep = { id: 'sw_late_day', levelId: 'nyam_high_late', sessionId: 'nyam' as const, sessionName: 'NY AM', shortName: 'NYA', isHigh: true, level: 1.0950, createdAt: Date.UTC(2026, 10, 16, 14, 30), sweptAt: lateSweepAt, sweptBarIndex: 1, sweepPrice: 1.0960 };
 (lateSweepEngine as any).kzEngine.getSweepEvents = () => [lateSweep];
 const lateDayCisd = (lateSweepEngine as any).evaluateConfluence(
   { time: Date.UTC(2026, 10, 17, 22, 30), open: 1.0960, high: 1.0962, low: 1.0900, close: 1.0910, confirmed: true },
@@ -147,6 +147,6 @@ const outOfKillzoneCisd = (outOfKillzoneSweepEngine as any).evaluateConfluence(
   { id: 'cisd_after_kz_sweep', barIndex: 12, time: Date.UTC(2026, 10, 17, 22, 30), direction: 'bearish', originLevel: 1.0955, originBarIndex: 2, noiseRatio: 0.9, toleranceUsed: 0.7, strongSweep: true, wickedSwingLevel: 1.0960, barsSinceSwing: 1, closePrice: 1.0910 },
   outOfKillzoneSweep, null, false, 'M5'
 );
-ok(outOfKillzoneCisd === null, 'a sweep that starts outside every Killzone cannot qualify');
+ok(!!outOfKillzoneCisd && outOfKillzoneCisd.timeframe === 'M5', 'a previously formed session level swept outside every Killzone can qualify on the same NY day');
 
 console.log(checks.join('\n'));
